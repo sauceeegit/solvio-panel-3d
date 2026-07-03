@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Solvio Panel — 3D</title>
+<style>
+  :root { color-scheme: light; }
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  #app { position: fixed; inset: 0; }
+  #hud {
+    position: fixed; left: 16px; bottom: 14px; z-index: 10;
+    color: #5b5b5b; font-size: 12px; line-height: 1.5; letter-spacing: .2px;
+    background: rgba(255,255,255,.55); backdrop-filter: blur(6px);
+    padding: 9px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,.06);
+    user-select: none;
+  }
+  #hud b { color: #222; font-weight: 600; }
+  #angle {
+    position: fixed; left: 18px; top: 66px; z-index: 10; user-select: none;
+    color: #5b5b5b; font-size: 12px; letter-spacing: .2px; font-variant-numeric: tabular-nums;
+    background: rgba(255,255,255,.55); backdrop-filter: blur(6px);
+    padding: 7px 11px; border-radius: 9px; border: 1px solid rgba(0,0,0,.06);
+  }
+  #angle b { color: #222; font-weight: 600; }
+  #title {
+    position: fixed; left: 18px; top: 16px; z-index: 10; user-select: none;
+    color: #2b2b2b; font-weight: 600; font-size: 15px; letter-spacing: .3px;
+  }
+  #title span { display:block; color:#7a7a7a; font-weight:400; font-size:11px; margin-top:2px; }
+  #spin, #frameBtn, #labelBtn, #modeBtn {
+    position: fixed; right: 16px; z-index: 10;
+    font-size: 12px; color:#444; background: rgba(255,255,255,.6);
+    border: 1px solid rgba(0,0,0,.08); border-radius: 8px; padding: 6px 10px; cursor: pointer;
+    backdrop-filter: blur(6px); min-width: 116px; text-align: left;
+  }
+  #spin { top: 16px; }
+  #frameBtn { top: 52px; }
+  #labelBtn { top: 88px; }
+  #modeBtn { top: 124px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="title">Solvio · N-Type Module<span>1761 × 1133 × 4.75 mm · balcony tilt-mount</span></div>
+<div id="angle">—</div>
+<button id="spin">▶ Auto-rotate</button>
+<button id="frameBtn">☑ Frame</button>
+<button id="labelBtn">☑ Labels</button>
+<button id="modeBtn">◹ Tilted</button>
+<div id="hud"><b>Drag</b> to orbit &nbsp;·&nbsp; <b>Scroll</b> to zoom &nbsp;·&nbsp; <b>Right-drag</b> to pan</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// ---- real-world dimensions (metres) ----
+const W = 1.133;      // width
+const H = 1.761;      // height
+const D = 0.00475;    // thickness (4.75 mm, true to spec)
+const R = 0.012;      // corner radius
+const BORDER = 0.014; // black laminate border (no cells)
+
+// ---- renderer ----
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+// ---- scene + grey studio backdrop ----
+const scene = new THREE.Scene();
+const studioBg = makeGradient('#e7e7e7', '#c4c6c9');          // neutral studio backdrop
+scene.background = studioBg;
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+
+// ---- camera ----
+const camera = new THREE.PerspectiveCamera(38, innerWidth/innerHeight, 0.01, 100);
+camera.position.set(1.7, 0.95, 2.1);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.minDistance = 0.6;
+controls.maxDistance = 8;
+controls.target.set(0, 0.5, 0);
+
+// ---- lighting ----
+const key = new THREE.DirectionalLight(0xffffff, 2.0);
+key.position.set(2.2, 3.0, 2.6);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.near = 0.5; key.shadow.camera.far = 12;
+key.shadow.camera.left = -2; key.shadow.camera.right = 2;
+key.shadow.camera.top = 2; key.shadow.camera.bottom = -2;
+key.shadow.bias = -0.0004;
+scene.add(key);
+scene.add(new THREE.DirectionalLight(0xdfe6ef, 0.5).translateX(-3).translateY(1).translateZ(-2));
+scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+
+// ---- the panel (built here, then mounted on the frame below) ----
+// front glass with procedural cell texture
+const cellTex = makeCellTexture();
+cellTex.colorSpace = THREE.SRGBColorSpace;
+
+const shape = roundedRectShape(W, H, R);
+const geo = new THREE.ExtrudeGeometry(shape, { depth: D, bevelEnabled: false, curveSegments: 6 });
+geo.translate(0, 0, -D/2);
+// remap cap UVs (ExtrudeGeometry caps are in world XY) -> 0..1
+cellTex.repeat.set(1/W, 1/H);
+cellTex.offset.set(0.5, 0.5);
+
+const glassMat = new THREE.MeshPhysicalMaterial({
+  map: cellTex,
+  color: 0xffffff,
+  metalness: 0.0,
+  roughness: 0.32,
+  clearcoat: 0.6,
+  clearcoatRoughness: 0.18,
+  reflectivity: 0.45,
+  envMapIntensity: 0.55,
+});
+const edgeMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0c, metalness: 0.3, roughness: 0.55 });
+
+// =================== shared frame materials + helpers (used by every build) ===================
+const metal     = new THREE.MeshStandardMaterial({ color: 0xb6bbc2, metalness: 0.95, roughness: 0.32, envMapIntensity: 1.1 });
+const metalDark = new THREE.MeshStandardMaterial({ color: 0x848b94, metalness: 0.9,  roughness: 0.45 });
+
+function makeBeam(p1, p2, bw, bh, mat) {            // rectangular box-section strut between two points
+  const dir = new THREE.Vector3().subVectors(p2, p1);
+  const len = dir.length();
+  const m = new THREE.Mesh(new THREE.BoxGeometry(bw, len, bh), mat);
+  m.castShadow = true; m.receiveShadow = true;
+  m.position.copy(p1).addScaledVector(dir, 0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  return m;
+}
+function flatBeam(p1, p2, faceDir, w, t, mat) {     // beam twisted so a flat face aligns with faceDir
+  const dir = new THREE.Vector3().subVectors(p2, p1); const len = dir.length(); dir.normalize();
+  const tAxis = faceDir.clone().normalize();
+  const wAxis = new THREE.Vector3().crossVectors(dir, tAxis).normalize();
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, len, t), mat);
+  m.castShadow = true; m.receiveShadow = true;
+  m.position.copy(p1).addScaledVector(dir, len / 2);
+  m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(wAxis, dir, tAxis));
+  return m;
+}
+function footPad(p) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.012, 0.10), metalDark);
+  m.castShadow = true; m.receiveShadow = true;
+  m.position.set(p.x, 0.006, p.z);
+  return m;
+}
+// flat bent-strap hook: bolted onto the vertical front rail, curling INWARD (toward -n / rear,
+// where a balcony railing sits). Thickness Tb matches the frame bars; flat faces point sideways.
+const HOOK_T = 0.04;                                // hook width across = vertical column width
+const HOOK_R = 0.036, HOOK_CY = 0.030;              // U-bend radius + bend-start height (shared with the balcony rail)
+const RAIL_Y = 0.945;                               // balcony handrail height — both mounts hook here
+function makeHook(top) {
+  const Wb = 0.005;                                 // strap width
+  // Side-view candy-cane in the vertical/depth plane. a = rearward (away from the panel),
+  // b = world-up. The straight slotted part runs down the VERTICAL column; the U curls over
+  // the top toward the rear and opens straight down.
+  const Rr = HOOK_R;                                // U-bend centerline radius (shared constant)
+  const cy = HOOK_CY, tailY = -0.012, riserY = -0.16; // bend start height, tail bottom, riser bottom
+  const arc = [150, 120, 90, 60, 30].map(deg => {   // clean 180° (half-circle) bend at radius Rr
+    const t = deg * Math.PI / 180;
+    return [Rr + Rr * Math.cos(t), cy + Rr * Math.sin(t)];
+  });
+  const key = [                                     // straight riser + the parametric half-circle bend
+    [0, riserY], [0, -0.05], [0, 0.005], [0, cy],
+    ...arc,
+    [2 * Rr, cy], [2 * Rr, 0.008], [2 * Rr, tailY]
+  ];
+  const spline = new THREE.CatmullRomCurve3(key.map(p => new THREE.Vector3(p[0], p[1], 0)), false, 'catmullrom', 0.5);
+  const cl = spline.getPoints(44).map(v => [v.x, v.y]);
+  const left = [], right = [];
+  for (let i = 0; i < cl.length; i++) {
+    const p = cl[i];
+    const a = cl[Math.max(0, i - 1)], b = cl[Math.min(cl.length - 1, i + 1)];
+    let nx = -(b[1] - a[1]), ny = (b[0] - a[0]);
+    const L = Math.hypot(nx, ny) || 1; nx /= L; ny /= L;
+    left.push([p[0] + nx * Wb / 2, p[1] + ny * Wb / 2]);
+    right.push([p[0] - nx * Wb / 2, p[1] - ny * Wb / 2]);
+  }
+  const shape = new THREE.Shape();
+  shape.moveTo(left[0][0], left[0][1]);
+  for (let i = 1; i < left.length; i++) shape.lineTo(left[i][0], left[i][1]);
+  for (let i = right.length - 1; i >= 0; i--) shape.lineTo(right[i][0], right[i][1]);
+  shape.closePath();
+  const g = new THREE.ExtrudeGeometry(shape, { depth: HOOK_T, bevelEnabled: false, curveSegments: 3 });
+  g.translate(0, 0, -HOOK_T / 2);
+  const m = new THREE.Mesh(g, metal);
+  m.castShadow = true; m.receiveShadow = true;
+  // local X -> rearward (-z), local Y -> world up (+y), thickness (local Z) -> across (+x); broad face ±x
+  m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0)));
+  m.position.copy(top);
+  return m;
+}
+
+// numbered-label sprite (added per build)
+function numberSprite(pos, text) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#e8392b'; c.beginPath(); c.arc(64, 64, 54, 0, Math.PI * 2); c.fill();
+  c.lineWidth = 6; c.strokeStyle = '#fff'; c.stroke();
+  c.fillStyle = '#fff'; c.font = 'bold 74px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(text, 64, 72);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, transparent: true }));
+  sp.scale.set(0.085, 0.085, 0.085);
+  sp.position.copy(pos);
+  sp.renderOrder = 999;
+  return sp;
+}
+
+// =================== build the panel + mount (tilted OR vertical) ===================
+function buildAssembly(vertical) {
+  const assembly = new THREE.Group();
+  scene.add(assembly);
+
+  const TILT = vertical ? 0 : THREE.MathUtils.degToRad(35);
+  const u = new THREE.Vector3(0, Math.cos(TILT), -Math.sin(TILT));   // up the panel slope
+  const n = new THREE.Vector3(0, Math.sin(TILT),  Math.cos(TILT));   // panel front normal
+  const Ls = W, RAILX = 0.60, FFz = 0.34;
+  const bo = n.clone().multiplyScalar(-(D / 2 + 0.0125));            // frame fronts just touch the panel back
+
+  // panel: tilted (or upright) and turned landscape
+  const mesh = new THREE.Mesh(geo, [glassMat, edgeMat]);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  const Cc = new THREE.Vector3(0, 0, FFz).add(u.clone().multiplyScalar(Ls / 2));
+  if (vertical) Cc.y -= (Ls + HOOK_CY - RAIL_Y);    // drop the upright panel so its hooks hang on the handrail
+  const tilt = new THREE.Group(); tilt.position.copy(Cc); tilt.rotation.x = -TILT; assembly.add(tilt);
+  const land = new THREE.Group(); land.rotation.z = -Math.PI / 2; land.add(mesh); tilt.add(land);
+
+  const frame = new THREE.Group(); assembly.add(frame);
+  const labelGroup = new THREE.Group(); assembly.add(labelGroup);
+  let partNo = 0;
+  let railY = 0, railZ = 0;                          // hook grab-line, captured below, used by the balcony
+  const reg = (m, pos) => { frame.add(m); labelGroup.add(numberSprite(pos, String(++partNo))); return m; };
+
+  const halfU = u.clone().multiplyScalar(Ls / 2);
+  const Pb = Cc.clone().sub(halfU);                 // panel bottom
+  const Pt = Cc.clone().add(halfU);                 // panel top
+
+  for (const sx of [-RAILX, RAILX]) {
+    if (vertical) {
+      // upright panel: rail + column + hook all coincident on the back (allowed to overlap), no base bar
+      const mountZ = Pt.z + bo.z;                                  // rail/column front touches panel back
+      const Bb = new THREE.Vector3(sx, Pb.y, mountZ), Tt = new THREE.Vector3(sx, Pt.y, mountZ);
+      const Cfoot = new THREE.Vector3(sx, Pb.y, mountZ), Ctop = new THREE.Vector3(sx, Pt.y, mountZ); // rails span the hanging panel
+      reg(makeBeam(Bb, Tt, 0.042, 0.025, metal), Bb.clone().lerp(Tt, 0.5));         // panel-mount rail
+      const col = makeBeam(Cfoot, Ctop, 0.025, 0.04, metal); col.rotateY(Math.PI / 2);
+      reg(col, Cfoot.clone().lerp(Ctop, 0.5));                                       // column (overlaps the rail)
+      reg(makeHook(Ctop), Ctop.clone().add(new THREE.Vector3(0, 0.10, -0.03)));      // hook (overlaps the column)
+      railY = Ctop.y + HOOK_CY; railZ = Ctop.z - HOOK_R;
+    } else {
+      // tilted A-frame: rail (to ground) + column (to panel back) + base bar + hook
+      const Bb = new THREE.Vector3(sx, Pb.y, Pb.z).add(bo);
+      Bb.addScaledVector(u, (0 - Bb.y) / u.y);                     // stop rail's lower end at the ground
+      const Tt = new THREE.Vector3(sx, Pt.y, Pt.z).add(bo);
+      const colBack = 0.006;
+      const colFrontZ = (Pt.z - colBack) + 0.0125;
+      const PbackTop  = Pt.clone().addScaledVector(n, -D / 2);
+      const Ctop = new THREE.Vector3(sx, PbackTop.y - n.z * (colFrontZ - PbackTop.z) / n.y, Pt.z - colBack);
+      Tt.addScaledVector(u, (Ctop.y - Tt.y) / u.y);               // lower rail top to the column top
+      const Cfoot = new THREE.Vector3(sx, -0.0125, Pt.z - colBack);
+      const BarRear = new THREE.Vector3(sx, 0, Pt.z - colBack);   // rear end under the column's center axis
+      const Pback = Pb.clone().addScaledVector(n, -D / 2);
+      const Ffoot = new THREE.Vector3(sx, 0, Pback.z - n.y * (0.0125 - Pback.y) / n.z);
+      reg(makeBeam(Bb, Tt, 0.042, 0.025, metal), Bb.clone().lerp(Tt, 0.5));         // panel-mount rail
+      const col = makeBeam(Cfoot, Ctop, 0.025, 0.04, metal); col.rotateY(Math.PI / 2);
+      reg(col, Cfoot.clone().lerp(Ctop, 0.5));                                       // vertical column
+      reg(makeBeam(BarRear, Ffoot, 0.040, 0.024, metalDark), BarRear.clone().lerp(Ffoot, 0.5)); // base bar 40 x 24mm (1mm narrower per side than rail, sits within it)
+      const hookTop = Ctop.clone(); hookTop.z -= (0.0125 + 0.0025);
+      reg(makeHook(hookTop), hookTop.clone().add(new THREE.Vector3(0, 0.10, -0.03))); // hook
+      railY = hookTop.y + HOOK_CY; railZ = hookTop.z - HOOK_R;
+    }
+  }
+
+  for (const s of [0.30, 0.72]) {                                  // horizontal cross-rails on the panel back
+    const pL = new THREE.Vector3(-RAILX, Pb.y, Pb.z).lerp(new THREE.Vector3(-RAILX, Pt.y, Pt.z), s).add(bo);
+    const pR = new THREE.Vector3( RAILX, Pb.y, Pb.z).lerp(new THREE.Vector3( RAILX, Pt.y, Pt.z), s).add(bo);
+    reg(flatBeam(pL, pR, n, 0.03, 0.025, metal), pL.clone().lerp(pR, 0.5));
+  }
+  {                                                                // rear tie between the columns
+    const tz = vertical ? (Pt.z + bo.z) : Pt.z;
+    const rL = new THREE.Vector3(-RAILX, Pt.y / 4, tz), rR = new THREE.Vector3(RAILX, Pt.y / 4, tz);
+    reg(makeBeam(rL, rR, 0.025, 0.025, metalDark), rL.clone().lerp(rR, 0.5));
+  }
+
+  return { assembly, frame, labelGroup };
+}
+
+let verticalMode = false, frameVisible = true, labelsVisible = true;
+let current = buildAssembly(verticalMode);
+
+// ---- auto-rotate toggle ----
+let spinning = false;
+const spinBtn = document.getElementById('spin');
+spinBtn.onclick = () => {
+  spinning = !spinning;
+  spinBtn.textContent = (spinning ? '⏸' : '▶') + ' Auto-rotate';
+};
+controls.addEventListener('start', () => { if (spinning) { spinning = false; spinBtn.textContent = '▶ Auto-rotate'; } });
+
+// ---- frame show/hide toggle ----
+const frameBtn = document.getElementById('frameBtn');
+frameBtn.onclick = () => {
+  frameVisible = !frameVisible;
+  current.frame.visible = frameVisible;
+  frameBtn.textContent = (frameVisible ? '☑' : '☐') + ' Frame';
+};
+
+const labelBtn = document.getElementById('labelBtn');
+labelBtn.onclick = () => {
+  labelsVisible = !labelsVisible;
+  current.labelGroup.visible = labelsVisible;
+  labelBtn.textContent = (labelsVisible ? '☑' : '☐') + ' Labels';
+};
+
+// ---- tilted / vertical mode toggle (rebuilds the model) ----
+const modeBtn = document.getElementById('modeBtn');
+modeBtn.onclick = () => {
+  verticalMode = !verticalMode;
+  scene.remove(current.assembly);
+  current = buildAssembly(verticalMode);
+  current.frame.visible = frameVisible;
+  current.labelGroup.visible = labelsVisible;
+  controls.target.set(0, verticalMode ? 0.45 : 0.5, 0);
+  controls.update();
+  modeBtn.textContent = verticalMode ? '▯ Vertical' : '◹ Tilted';
+};
+
+// ---- live view-angle readout (updates as you orbit / auto-rotate) ----
+const angleEl = document.getElementById('angle');
+function updateAngle() {
+  // model-relative azimuth = camera orbit minus the model's own spin
+  let az = THREE.MathUtils.radToDeg(controls.getAzimuthalAngle())
+         - THREE.MathUtils.radToDeg(current.assembly.rotation.y);
+  az = ((az % 360) + 540) % 360 - 180;                       // wrap to -180°..180°
+  const el = 90 - THREE.MathUtils.radToDeg(controls.getPolarAngle());  // 0° = eye level, 90° = top-down
+  const dist = camera.position.distanceTo(controls.target);
+  const s = `Azimuth <b>${az.toFixed(0)}°</b> &nbsp;·&nbsp; Elevation <b>${el.toFixed(0)}°</b> &nbsp;·&nbsp; Dist <b>${dist.toFixed(2)} m</b>`;
+  if (s !== angleEl.dataset.s) { angleEl.innerHTML = s; angleEl.dataset.s = s; }
+}
+
+// ---- loop ----
+function animate() {
+  requestAnimationFrame(animate);
+  if (spinning) current.assembly.rotation.y += 0.0035;
+  controls.update();
+  updateAngle();
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// =================== helpers ===================
+function roundedRectShape(w, h, r) {
+  const s = new THREE.Shape();
+  const x = -w/2, y = -h/2;
+  s.moveTo(x + r, y);
+  s.lineTo(x + w - r, y);
+  s.quadraticCurveTo(x + w, y, x + w, y + r);
+  s.lineTo(x + w, y + h - r);
+  s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  s.lineTo(x + r, y + h);
+  s.quadraticCurveTo(x, y + h, x, y + h - r);
+  s.lineTo(x, y + r);
+  s.quadraticCurveTo(x, y, x + r, y);
+  return s;
+}
+
+function makeGradient(top, bottom) {
+  const c = document.createElement('canvas');
+  c.width = 4; c.height = 512;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 512);
+  grad.addColorStop(0, top);
+  grad.addColorStop(1, bottom);
+  g.fillStyle = grad; g.fillRect(0, 0, 4, 512);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// all-black mono-PERC look: 6 columns x 16 rows of half-cut cells,
+// fine multi-busbar fingers, central ribbon gap. No golden label.
+function makeCellTexture() {
+  const cols = 6, rows = 16;
+  const px = 1400;                                   // canvas width
+  const py = Math.round(px * H / W);                 // keep face aspect
+  const cv = document.createElement('canvas');
+  cv.width = px; cv.height = py;
+  const ctx = cv.getContext('2d');
+
+  // base black laminate
+  ctx.fillStyle = '#040405';
+  ctx.fillRect(0, 0, px, py);
+
+  // active (celled) area inside the border
+  const bx = BORDER / W * px, by = BORDER / H * py;
+  const aw = px - 2*bx, ah = py - 2*by;
+
+  const gap = aw * 0.0042;          // gap between cells
+  const midGap = ah * 0.012;        // larger central ribbon gap (half-cut split)
+  const cw = (aw - (cols - 1) * gap) / cols;
+  const ch = (ah - (rows - 1) * gap - midGap) / rows;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = bx + c * (cw + gap);
+      let y = by + r * (ch + gap);
+      if (r >= rows / 2) y += midGap;               // central split
+
+      // cell body — very dark with faint cool tint + subtle sheen gradient
+      const grad = ctx.createLinearGradient(x, y, x + cw, y + ch);
+      grad.addColorStop(0, '#0c0d12');
+      grad.addColorStop(0.5, '#090a0e');
+      grad.addColorStop(1, '#0c0d12');
+      ctx.fillStyle = grad;
+      roundRect(ctx, x, y, cw, ch, cw * 0.03);
+      ctx.fill();
+
+      // multi-busbar fingers — fine vertical lines
+      ctx.strokeStyle = 'rgba(40,44,55,0.28)';
+      ctx.lineWidth = Math.max(1, px * 0.0006);
+      const fingers = 12;
+      for (let f = 1; f < fingers; f++) {
+        const fx = x + (cw * f / fingers);
+        ctx.beginPath(); ctx.moveTo(fx, y + ch*0.04); ctx.lineTo(fx, y + ch*0.96); ctx.stroke();
+      }
+
+      // two horizontal busbar wires with solder dots
+      ctx.strokeStyle = 'rgba(70,76,90,0.30)';
+      ctx.lineWidth = Math.max(1, px * 0.0009);
+      for (const bb of [0.33, 0.67]) {
+        const yb = y + ch * bb;
+        ctx.beginPath(); ctx.moveTo(x + cw*0.03, yb); ctx.lineTo(x + cw*0.97, yb); ctx.stroke();
+      }
+
+      // corner chamfer marks (mono cell pseudo-square corners)
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.lineWidth = Math.max(1, px * 0.0016);
+      const chm = cw * 0.10;
+      ctx.beginPath();
+      ctx.moveTo(x, y + chm); ctx.lineTo(x + chm, y);
+      ctx.moveTo(x + cw - chm, y); ctx.lineTo(x + cw, y + chm);
+      ctx.moveTo(x, y + ch - chm); ctx.lineTo(x + chm, y + ch);
+      ctx.moveTo(x + cw - chm, y + ch); ctx.lineTo(x + cw, y + ch - chm);
+      ctx.stroke();
+    }
+  }
+
+  // faint overall vignette toward edges
+  const vg = ctx.createRadialGradient(px/2, py/2, py*0.2, px/2, py/2, py*0.75);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.35)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, px, py);
+
+  const t = new THREE.CanvasTexture(cv);
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+</script>
+</body>
+</html>

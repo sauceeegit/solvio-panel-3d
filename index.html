@@ -320,7 +320,8 @@ function buildBalcony(parent, railY, railZ) {
   const rail     = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, metalness: 0.9,  roughness: 0.35, envMapIntensity: 1.0 });
   const railD    = new THREE.MeshStandardMaterial({ color: 0x7c828a, metalness: 0.85, roughness: 0.45 });
   const concrete = new THREE.MeshStandardMaterial({ color: 0xcdc8be, metalness: 0.0,  roughness: 0.95 });
-  const wallMat  = new THREE.MeshStandardMaterial({ color: 0xc9c3a2, metalness: 0.0,  roughness: 0.9 }); // yellowish gray building
+  const wallMat  = new THREE.MeshStandardMaterial({ color: 0xc9c3a2, metalness: 0.0,  roughness: 0.9, transparent: true, opacity: 0.5 }); // yellowish gray building, 50% transparent (above slab)
+  const wallMatSolid = new THREE.MeshStandardMaterial({ color: 0xc9c3a2, metalness: 0.0, roughness: 0.9 });                                 // opaque below the slab top
 
   const tube = (len, r, mat) => {
     const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 20), mat);
@@ -357,15 +358,21 @@ function buildBalcony(parent, railY, railZ) {
   }
   // concrete floor slab + building wall (floor top at floorY)
   const groundGrp = new THREE.Group(); groundGrp.name = 'balconyGround'; g.add(groundGrp);
-  const slab = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, 0.2, floorDepth), concrete);
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, 0.2, floorDepth), wallMatSolid); // match the opaque lower wall
   slab.position.set(0, floorY - 0.1, railZ - floorDepth / 2 - 0.02);
   slab.receiveShadow = true; slab.castShadow = true; groundGrp.add(slab);
   const wallZ = railZ - floorDepth - 0.1;
   const wallTop = floorY + 1.6;                        // top lowered 1 m
   const wallBot = (floorY - 0.2) - 0.5;                // 0.5 m below the slab underside
-  const wallH = wallTop - wallBot;
-  const wall = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, wallH, 0.2), wallMat);
-  wall.position.set(0, (wallTop + wallBot) / 2, wallZ); wall.receiveShadow = true; groundGrp.add(wall);
+  const slabTop = floorY;                              // split line = top of the base slab
+  // upper section (above slab top): 50% transparent
+  const upH = wallTop - slabTop;
+  const wallUp = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, upH, 0.2), wallMat);
+  wallUp.position.set(0, (wallTop + slabTop) / 2, wallZ); wallUp.receiveShadow = true; groundGrp.add(wallUp);
+  // lower section (below slab top): opaque
+  const loH = slabTop - wallBot;
+  const wallLo = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, loH, 0.2), wallMatSolid);
+  wallLo.position.set(0, (slabTop + wallBot) / 2, wallZ); wallLo.receiveShadow = true; groundGrp.add(wallLo);
 
   return g;
 }

@@ -28,7 +28,7 @@
     color: #2b2b2b; font-weight: 600; font-size: 15px; letter-spacing: .3px;
   }
   #title span { display:block; color:#7a7a7a; font-weight:400; font-size:11px; margin-top:2px; }
-  #spin, #frameBtn, #labelBtn, #modeBtn {
+  #spin, #frameBtn, #labelBtn, #modeBtn, #bldgBtn, #typeBtn, #railBtn, #sunBtn {
     position: fixed; right: 16px; z-index: 10;
     font-size: 12px; color:#444; background: rgba(255,255,255,.6);
     border: 1px solid rgba(0,0,0,.08); border-radius: 8px; padding: 6px 10px; cursor: pointer;
@@ -38,6 +38,20 @@
   #frameBtn { top: 52px; }
   #labelBtn { top: 88px; }
   #modeBtn { top: 124px; }
+  #bldgBtn { top: 160px; }
+  #typeBtn { top: 196px; }
+  #railBtn { top: 232px; }
+  #sunBtn { top: 268px; }
+  #bctrl {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 10;
+    display: flex; gap: 20px; align-items: flex-end; user-select: none;
+    background: rgba(255,255,255,.62); backdrop-filter: blur(6px);
+    padding: 9px 16px; border-radius: 10px; border: 1px solid rgba(0,0,0,.07);
+    font-size: 12px; color: #555;
+  }
+  #bctrl label { display: flex; flex-direction: column; gap: 4px; }
+  #bctrl b { color: #222; font-weight: 600; font-variant-numeric: tabular-nums; }
+  #bctrl input[type=range] { width: 160px; accent-color: #e8392b; }
 </style>
 </head>
 <body>
@@ -46,9 +60,19 @@
 <div id="angle">—</div>
 <button id="spin">▶ Auto-rotate</button>
 <button id="frameBtn">☑ Frame</button>
-<button id="labelBtn">☑ Labels</button>
+<button id="labelBtn">☐ Labels</button>
 <button id="modeBtn">◹ Tilted</button>
+<button id="bldgBtn">☑ Balcony</button>
+<button id="typeBtn">◧ All-black</button>
+<button id="railBtn">▥ Bar railing</button>
+<button id="sunBtn">☀ Sun</button>
 <div id="hud"><b>Drag</b> to orbit &nbsp;·&nbsp; <b>Scroll</b> to zoom &nbsp;·&nbsp; <b>Right-drag</b> to pan</div>
+<div id="bctrl">
+  <label>Balcony length &nbsp;<b><span id="lenOut">5.3</span> m</b>
+    <input id="lenSlider" type="range" min="1.8" max="12" step="0.1" value="5.3" autocomplete="off" /></label>
+  <label>Railing height &nbsp;<b><span id="depOut">0.95</span> m</b>
+    <input id="depSlider" type="range" min="0.7" max="1.4" step="0.05" value="0.95" autocomplete="off" /></label>
+</div>
 
 <script type="importmap">
 {
@@ -63,6 +87,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
 // ---- real-world dimensions (metres) ----
 const W = 1.133;      // width
@@ -71,6 +96,23 @@ const D = 0.00475;    // thickness (4.75 mm, true to spec)
 const R = 0.012;      // corner radius
 const BORDER = 0.014; // black laminate border (no cells)
 
+// ---- balcony dimensions (live-adjustable via sliders) ----
+let balconyLen = 3 * H;    // handrail run along x (m)
+let railingHeight = 0.95;  // floor-to-top-rail height (m); depth fixed at 1.2 m
+const FIXED_RAILY = 0.945, FIXED_RAILZ = -0.367; // balcony stays here in both modes; panel+mount shift to hook onto it
+let buildingVisible = true; // wall + floor slab (the "building"); toggled by the Building button
+let panelType = 'black';    // 'black' (all-black mono) | 'classic' (blue cells, silver frame, gold badge)
+let balconyType = 'baluster'; // 'baluster' (metal bars) | 'glass' (frameless glass panel, top rail only)
+const CELL_PALETTES = {
+  black:   { base: '#040405', cellA: '#0c0d12', cellB: '#090a0e',
+             finger: 'rgba(40,44,55,0.28)', bus: 'rgba(70,76,90,0.30)', cham: 'rgba(0,0,0,0.55)',
+             vignette: 'rgba(0,0,0,0.35)', badge: false },
+  classic: { base: '#eceef2', cellA: '#111318', cellB: '#0a0b0f',
+             finger: 'rgba(120,126,140,0.22)', bus: 'rgba(150,156,170,0.30)', cham: null,
+             vignette: 'rgba(0,0,0,0.16)', badge: false }
+};
+let lastRailY = 0.945, lastRailZ = -0.37; // hook grab-line captured from the last assembly build
+
 // ---- renderer ----
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -78,8 +120,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.enabled = false;
 app.appendChild(renderer.domElement);
 
 // ---- scene + grey studio backdrop ----
@@ -92,14 +133,14 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture
 
 // ---- camera ----
 const camera = new THREE.PerspectiveCamera(38, innerWidth/innerHeight, 0.01, 100);
-camera.position.set(1.7, 0.95, 2.1);
+camera.position.set(3.4, 1.6, 4.0);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.07;
 controls.minDistance = 0.6;
-controls.maxDistance = 8;
-controls.target.set(0, 0.5, 0);
+controls.maxDistance = 16;
+controls.target.set(0, 0.5, -0.05);
 
 // ---- lighting ----
 const key = new THREE.DirectionalLight(0xffffff, 2.0);
@@ -114,9 +155,37 @@ scene.add(key);
 scene.add(new THREE.DirectionalLight(0xdfe6ef, 0.5).translateX(-3).translateY(1).translateZ(-2));
 scene.add(new THREE.AmbientLight(0xffffff, 0.25));
 
+// ---- fixed sun: warm directional light + glow, aimed at the tilted panel face ----
+let sunOn = true;
+const skyBg = makeGradient('#cfe1f2', '#f4eee2');            // soft daytime sky (cool top -> warm base)
+const sunPos = new THREE.Vector3(-2.6, 6.0, 1.4);          // high + to the side, so reflection isn't a full mirror wash
+const sunLight = new THREE.DirectionalLight(0xfff1d4, 0.8); // gentle warm sunlight
+sunLight.position.copy(sunPos); sunLight.target.position.set(0, 0.45, 0.1);
+const sunCv = document.createElement('canvas'); sunCv.width = sunCv.height = 256;
+{ const g = sunCv.getContext('2d'); const rg = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  rg.addColorStop(0, 'rgba(255,251,238,1)'); rg.addColorStop(0.14, 'rgba(255,243,212,0.92)');
+  rg.addColorStop(0.42, 'rgba(255,209,138,0.32)'); rg.addColorStop(1, 'rgba(255,200,120,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, 256, 256); }
+const sunTex = new THREE.CanvasTexture(sunCv); sunTex.colorSpace = THREE.SRGBColorSpace;
+const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, transparent: true, depthWrite: false }));
+sunSprite.scale.set(3.0, 3.0, 1); sunSprite.position.copy(sunPos);
+const sunGroup = new THREE.Group(); sunGroup.add(sunLight, sunLight.target, sunSprite); scene.add(sunGroup);
+function applySun() { sunGroup.visible = sunOn; scene.background = sunOn ? skyBg : studioBg; }
+applySun();
+
+// ---- ground shadow catcher ----
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(14, 14),
+  new THREE.ShadowMaterial({ opacity: 0.22 })
+);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = 0;
+ground.receiveShadow = true;
+scene.add(ground);
+
 // ---- the panel (built here, then mounted on the frame below) ----
 // front glass with procedural cell texture
-const cellTex = makeCellTexture();
+let cellTex = makeCellTexture(panelType);
 cellTex.colorSpace = THREE.SRGBColorSpace;
 
 const shape = roundedRectShape(W, H, R);
@@ -136,7 +205,11 @@ const glassMat = new THREE.MeshPhysicalMaterial({
   reflectivity: 0.45,
   envMapIntensity: 0.55,
 });
-const edgeMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0c, metalness: 0.3, roughness: 0.55 });
+const edgeMat = new THREE.MeshStandardMaterial({ color: 0xc2c3ca, metalness: 0.85, roughness: 0.28 }); // silver edge to show panel thinness
+// backsheet on the panel rear — white for the classic type, dark for the all-black type
+const backMat = new THREE.MeshStandardMaterial({ color: 0x0e0e10, roughness: 0.72, metalness: 0.0, side: THREE.DoubleSide });
+function setBacksheetColor() { backMat.color.set(panelType === 'classic' ? 0xeef0f3 : 0x0e0e10); }
+setBacksheetColor();
 
 // =================== shared frame materials + helpers (used by every build) ===================
 const metal     = new THREE.MeshStandardMaterial({ color: 0xb6bbc2, metalness: 0.95, roughness: 0.32, envMapIntensity: 1.1 });
@@ -231,6 +304,93 @@ function numberSprite(pos, text) {
   return sp;
 }
 
+// =================== building balcony the panel hooks onto ===================
+// railY/railZ = world position of the hooks' U-bend centre (same for both legs).
+// The handrail nestles up into the hook apex; balusters + slab + wall sit behind it.
+function buildBalcony(parent, railY, railZ) {
+  const g = new THREE.Group(); g.name = 'balcony'; g.visible = buildingVisible; parent.add(g);
+
+  const L = balconyLen;                                // handrail run (live-adjustable length)
+  const railR = 0.022;                                 // handrail tube radius (fits inside the hooks)
+  const railCY = railY + (HOOK_R - 0.0025 - railR);    // top rail sits at the hook grab-line (fixed)
+  const floorDepth = 1.2;                              // balcony depth, fixed at 1.2 m
+  const floorY = railCY - railingHeight;               // drop the floor to set the railing height
+  const lowY = floorY + 0.10;                          // lower rail just above the floor
+
+  const rail     = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, metalness: 0.9,  roughness: 0.35, envMapIntensity: 1.0 });
+  const railD    = new THREE.MeshStandardMaterial({ color: 0x7c828a, metalness: 0.85, roughness: 0.45 });
+  const concrete = new THREE.MeshStandardMaterial({ color: 0xcdc8be, metalness: 0.0,  roughness: 0.95 });
+  const wallMat  = new THREE.MeshStandardMaterial({ color: 0xc9c3a2, metalness: 0.0,  roughness: 0.9 }); // yellowish gray building
+
+  const tube = (len, r, mat) => {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 20), mat);
+    m.castShadow = true; m.receiveShadow = true; return m;
+  };
+
+  if (balconyType === 'glass') {
+    // square-section top handrail sized to sit within the hook's U (hook inner opening ~67 mm)
+    const sq = 0.032;
+    const topBar = new THREE.Mesh(new THREE.BoxGeometry(L, sq, sq), rail);
+    topBar.position.set(0, railCY, railZ); topBar.castShadow = topBar.receiveShadow = true; g.add(topBar);
+    // frameless glass balustrade below the rail
+    const glassBal = new THREE.MeshPhysicalMaterial({ color: 0xdfeaf0, metalness: 0.0, roughness: 0.06,
+      transmission: 0.9, thickness: 0.012, ior: 1.5, transparent: true, envMapIntensity: 1.0 });
+    const gTop = railCY - sq / 2 - 0.006, gBot = floorY + 0.02, gH = Math.max(0.05, gTop - gBot);
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(L, gH, 0.012), glassBal);
+    glass.position.set(0, (gTop + gBot) / 2, railZ); g.add(glass);
+  } else {
+    // round top handrail — the bar the hooks grab
+    const top = tube(L, railR, rail); top.rotation.z = Math.PI / 2; top.position.set(0, railCY, railZ); g.add(top);
+    // lower rail just above the floor
+    const low = tube(L, railR * 0.8, rail); low.rotation.z = Math.PI / 2; low.position.set(0, lowY, railZ); g.add(low);
+    // end posts (floor up to top rail)
+    const postLen = (railCY + 0.04) - floorY;
+    for (const px of [-L / 2, L / 2]) {
+      const post = tube(postLen, 0.028, railD); post.position.set(px, (floorY + railCY + 0.04) / 2, railZ); g.add(post);
+    }
+    // balusters (lower rail up to top rail)
+    const n = Math.max(2, Math.round(L / 0.11));
+    for (let i = 0; i <= n; i++) {
+      const b = tube(railCY - lowY, 0.006, rail);
+      b.position.set(-L / 2 + i * (L / n), (railCY + lowY) / 2, railZ); g.add(b);
+    }
+  }
+  // concrete floor slab + building wall (floor top at floorY)
+  const groundGrp = new THREE.Group(); groundGrp.name = 'balconyGround'; g.add(groundGrp);
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, 0.2, floorDepth), concrete);
+  slab.position.set(0, floorY - 0.1, railZ - floorDepth / 2 - 0.02);
+  slab.receiveShadow = true; slab.castShadow = true; groundGrp.add(slab);
+  const wallZ = railZ - floorDepth - 0.1;
+  const wallTop = floorY + 1.6;                        // top lowered 1 m
+  const wallBot = (floorY - 0.2) - 0.5;                // 0.5 m below the slab underside
+  const wallH = wallTop - wallBot;
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, wallH, 0.2), wallMat);
+  wall.position.set(0, (wallTop + wallBot) / 2, wallZ); wall.receiveShadow = true; groundGrp.add(wall);
+
+  return g;
+}
+
+// =================== back-of-panel components: 3 junction boxes + 2 cables + 2 MC4 connectors ===================
+// Built in the panel's local frame (x = width 1.133 m, y = height 1.761 m, z = thickness; front = +z).
+function buildBackComponents() {
+  const g = new THREE.Group(); g.name = 'backComponents';
+  const boxMat  = new THREE.MeshStandardMaterial({ color: 0x1b1b1d, roughness: 0.60, metalness: 0.10 });
+  const cableMat = new THREE.MeshStandardMaterial({ color: 0x0c0c0d, roughness: 0.75, metalness: 0.00 });
+  const connMat = new THREE.MeshStandardMaterial({ color: 0x2b2b2e, roughness: 0.45, metalness: 0.25 });
+  const bz = -D / 2 - 0.008;                          // sit just off the back face, protruding away from the front
+  const boxGeo = new THREE.BoxGeometry(0.10, 0.035, 0.016);   // "rectangular box" junction box
+  const box = (x) => { const m = new THREE.Mesh(boxGeo, boxMat); m.position.set(x, 0, bz); m.castShadow = m.receiveShadow = true; return m; };
+  const tube = (x1, x2, r, mat) => {                  // "circular tube" — x-aligned cylinder from x1 to x2
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, Math.abs(x2 - x1), 16), mat);
+    m.rotation.z = Math.PI / 2; m.position.set((x1 + x2) / 2, 0, bz);
+    m.castShadow = m.receiveShadow = true; return m;
+  };
+  g.add(box(-0.30), box(0), box(0.30));               // left, centre, right junction boxes
+  g.add(tube(-0.35, -0.44, 0.005, cableMat), tube(-0.44, -0.48, 0.011, connMat));  // left  cable + connector (points left)
+  g.add(tube( 0.35,  0.44, 0.005, cableMat), tube( 0.44,  0.48, 0.011, connMat));  // right cable + connector (points right)
+  return g;
+}
+
 // =================== build the panel + mount (tilted OR vertical) ===================
 function buildAssembly(vertical) {
   const assembly = new THREE.Group();
@@ -248,7 +408,9 @@ function buildAssembly(vertical) {
   const Cc = new THREE.Vector3(0, 0, FFz).add(u.clone().multiplyScalar(Ls / 2));
   if (vertical) Cc.y -= (Ls + HOOK_CY - RAIL_Y);    // drop the upright panel so its hooks hang on the handrail
   const tilt = new THREE.Group(); tilt.position.copy(Cc); tilt.rotation.x = -TILT; assembly.add(tilt);
-  const land = new THREE.Group(); land.rotation.z = -Math.PI / 2; land.add(mesh); tilt.add(land);
+  const backsheet = new THREE.Mesh(new THREE.ShapeGeometry(roundedRectShape(W, H, R)), backMat);
+  backsheet.position.z = -D / 2 - 0.001;             // solid backsheet just behind the rear face
+  const land = new THREE.Group(); land.rotation.z = -Math.PI / 2; land.add(mesh); land.add(backsheet); land.add(buildBackComponents()); tilt.add(land);
 
   const frame = new THREE.Group(); assembly.add(frame);
   const labelGroup = new THREE.Group(); assembly.add(labelGroup);
@@ -306,11 +468,18 @@ function buildAssembly(vertical) {
     reg(makeBeam(rL, rR, 0.025, 0.025, metalDark), rL.clone().lerp(rR, 0.5));
   }
 
+  // keep the balcony in a FIXED spot in both modes; shift the panel + mount so its hooks reach it
+  const dy = FIXED_RAILY - railY, dz = FIXED_RAILZ - railZ;
+  for (const grp of [tilt, frame, labelGroup]) { grp.position.y += dy; grp.position.z += dz; }
+  lastRailY = FIXED_RAILY; lastRailZ = FIXED_RAILZ;
+  buildBalcony(assembly, FIXED_RAILY, FIXED_RAILZ);
+
   return { assembly, frame, labelGroup };
 }
 
-let verticalMode = false, frameVisible = true, labelsVisible = true;
+let verticalMode = false, frameVisible = true, labelsVisible = false;
 let current = buildAssembly(verticalMode);
+current.labelGroup.visible = labelsVisible;   // hidden by default
 
 // ---- auto-rotate toggle ----
 let spinning = false;
@@ -336,6 +505,43 @@ labelBtn.onclick = () => {
   labelBtn.textContent = (labelsVisible ? '☑' : '☐') + ' Labels';
 };
 
+// ---- whole-balcony show/hide toggle ----
+const bldgBtn = document.getElementById('bldgBtn');
+bldgBtn.onclick = () => {
+  buildingVisible = !buildingVisible;
+  const b = current.assembly.getObjectByName('balcony');
+  if (b) b.visible = buildingVisible;
+  bldgBtn.textContent = (buildingVisible ? '☑' : '☐') + ' Balcony';
+};
+
+// ---- panel type toggle (swaps the cell face texture) ----
+const typeBtn = document.getElementById('typeBtn');
+typeBtn.onclick = () => {
+  panelType = (panelType === 'black') ? 'classic' : 'black';
+  const t = makeCellTexture(panelType);
+  t.colorSpace = THREE.SRGBColorSpace; t.repeat.set(1 / W, 1 / H); t.offset.set(0.5, 0.5);
+  cellTex.dispose(); cellTex = t;
+  glassMat.map = t; glassMat.needsUpdate = true;
+  setBacksheetColor();                               // white back for classic, dark for all-black
+  typeBtn.textContent = (panelType === 'black') ? '◧ All-black' : '◨ Classic';
+};
+
+// ---- balcony railing type toggle (rebuilds the balcony) ----
+const railBtn = document.getElementById('railBtn');
+railBtn.onclick = () => {
+  balconyType = (balconyType === 'baluster') ? 'glass' : 'baluster';
+  rebuildBalcony();
+  railBtn.textContent = (balconyType === 'baluster') ? '▥ Bar railing' : '▢ Glass railing';
+};
+
+// ---- sun on/off toggle ----
+const sunBtn = document.getElementById('sunBtn');
+sunBtn.onclick = () => {
+  sunOn = !sunOn;
+  applySun();
+  sunBtn.textContent = (sunOn ? '☀' : '☁') + ' Sun';
+};
+
 // ---- tilted / vertical mode toggle (rebuilds the model) ----
 const modeBtn = document.getElementById('modeBtn');
 modeBtn.onclick = () => {
@@ -344,10 +550,59 @@ modeBtn.onclick = () => {
   current = buildAssembly(verticalMode);
   current.frame.visible = frameVisible;
   current.labelGroup.visible = labelsVisible;
-  controls.target.set(0, verticalMode ? 0.45 : 0.5, 0);
-  controls.update();
-  modeBtn.textContent = verticalMode ? '▯ Vertical' : '◹ Tilted';
+  modeBtn.textContent = verticalMode ? '▯ Vertical' : '◹ Tilted';  // camera/target unchanged so the balcony stays put
 };
+
+// place the camera at a precise azimuth/elevation (used by the reference-render helper)
+function setView(azDeg, elDeg, dist) {
+  const off = new THREE.Vector3().setFromSpherical(
+    new THREE.Spherical(dist, THREE.MathUtils.degToRad(90 - elDeg), THREE.MathUtils.degToRad(azDeg)));
+  camera.position.copy(controls.target).add(off);
+  controls.update();
+}
+// open framed on the balcony
+controls.target.set(0, 0.5, 0); setView(40, 12, 5.6);
+
+// isolated reference render of just the panel + mount (used as a style reference for AI compositing)
+window.__refShot = (azDeg = 35, elDeg = 12, dist = 2.4, W = 1200, H = 820) => {
+  const balcony = current.assembly.getObjectByName('balcony');
+  const prevSize = new THREE.Vector2(); renderer.getSize(prevSize);
+  const prevRatio = renderer.getPixelRatio(), prevAspect = camera.aspect;
+  const prev = { bg: scene.background, ground: ground.visible, balcony: balcony ? balcony.visible : null,
+                 labels: current.labelGroup.visible, tx: controls.target.clone(),
+                 pos: camera.position.clone() };
+  scene.background = makeGradient('#f2f2f2', '#dadde0');     // clean neutral studio backdrop
+  ground.visible = false; if (balcony) balcony.visible = false;
+  current.labelGroup.visible = false;
+  renderer.setPixelRatio(1); renderer.setSize(W, H, false);  // fixed render size, independent of the window
+  camera.aspect = W / H; camera.updateProjectionMatrix();
+  controls.target.set(0, 0.46, 0); setView(azDeg, elDeg, dist);
+  renderer.render(scene, camera);
+  const url = renderer.domElement.toDataURL('image/jpeg', 0.9);
+  scene.background = prev.bg; ground.visible = prev.ground; if (balcony) balcony.visible = prev.balcony;
+  current.labelGroup.visible = prev.labels;
+  if (prevSize.x > 0 && prevSize.y > 0) {                    // restore the live view if it had a real size
+    renderer.setPixelRatio(prevRatio); renderer.setSize(prevSize.x, prevSize.y, false);
+    camera.aspect = prevAspect; camera.updateProjectionMatrix();
+  }
+  controls.target.copy(prev.tx); camera.position.copy(prev.pos); controls.update();
+  return url;
+};
+
+// export the panel + mount (no balcony/floor/wall/labels) as a binary .glb for Blender/KeyShot
+window.__exportGLB = () => new Promise((resolve, reject) => {
+  const balcony = current.assembly.getObjectByName('balcony');
+  const prevB = balcony ? balcony.visible : null, prevL = current.labelGroup.visible;
+  if (balcony) balcony.visible = false;                       // exclude railing/floor/wall via onlyVisible
+  current.labelGroup.visible = false;                         // exclude the numbered labels
+  const restore = () => { if (balcony) balcony.visible = prevB; current.labelGroup.visible = prevL; };
+  new GLTFExporter().parse(current.assembly, async (result) => {
+    restore();
+    const dataUrl = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(new Blob([result], { type: 'model/gltf-binary' })); });
+    const res = await fetch('/save?name=solvio_panel.glb', { method: 'POST', body: dataUrl });
+    resolve(await res.text());
+  }, (e) => { restore(); reject(e); }, { binary: true, onlyVisible: true });
+});
 
 // ---- live view-angle readout (updates as you orbit / auto-rotate) ----
 const angleEl = document.getElementById('angle');
@@ -361,6 +616,77 @@ function updateAngle() {
   const s = `Azimuth <b>${az.toFixed(0)}°</b> &nbsp;·&nbsp; Elevation <b>${el.toFixed(0)}°</b> &nbsp;·&nbsp; Dist <b>${dist.toFixed(2)} m</b>`;
   if (s !== angleEl.dataset.s) { angleEl.innerHTML = s; angleEl.dataset.s = s; }
 }
+
+// ---- live balcony size controls (rebuild only the balcony on slider input) ----
+function disposeGroup(g) {
+  g.traverse(o => { if (o.geometry) o.geometry.dispose();
+    const m = o.material; if (m) (Array.isArray(m) ? m : [m]).forEach(x => x.dispose()); });
+}
+function rebuildBalcony() {
+  const old = current.assembly.getObjectByName('balcony');
+  if (old) { current.assembly.remove(old); disposeGroup(old); }
+  buildBalcony(current.assembly, lastRailY, lastRailZ);
+}
+const lenSlider = document.getElementById('lenSlider'), depSlider = document.getElementById('depSlider');
+const lenOut = document.getElementById('lenOut'), depOut = document.getElementById('depOut');
+lenSlider.value = balconyLen;    lenOut.textContent = balconyLen.toFixed(1);
+depSlider.value = railingHeight;  depOut.textContent = railingHeight.toFixed(2);
+lenSlider.oninput = () => { balconyLen = parseFloat(lenSlider.value); lenOut.textContent = balconyLen.toFixed(1); rebuildBalcony(); };
+depSlider.oninput = () => { railingHeight = parseFloat(depSlider.value); depOut.textContent = railingHeight.toFixed(2); rebuildBalcony(); };
+
+// ---- portrait product snapshot of just the panel module (with cell grid) ----
+window.__panelSnap = (azDeg = -50, rollDeg = -15, dist = 4.4, focusY = 0, outW = 1000, outH = 1300) => {
+  const panel = new THREE.Mesh(geo, [glassMat, edgeMat]);   // geo is portrait, facing +Z, centred at origin
+  panel.rotation.y = THREE.MathUtils.degToRad(azDeg);        // turn (negative = face left)
+  panel.rotation.z = THREE.MathUtils.degToRad(rollDeg);      // in-plane roll (negative = clockwise on screen)
+  const snap = new THREE.Scene();
+  snap.background = makeGradient('#f0f0f0', '#d2d2d2');
+  snap.environment = scene.environment;
+  snap.add(panel);
+  panel.updateMatrixWorld(true);
+  const k = new THREE.DirectionalLight(0xffffff, 2.4); k.position.set(-2.2, 2.5, 3.5); snap.add(k);
+  snap.add(new THREE.AmbientLight(0xffffff, 0.45));
+  const focus = new THREE.Vector3(0, focusY, 0).applyMatrix4(panel.matrixWorld); // aim point on the panel
+  const cam = new THREE.PerspectiveCamera(30, outW / outH, 0.01, 100);
+  cam.position.set(focus.x, focus.y, dist); cam.lookAt(focus);
+  const prevSize = new THREE.Vector2(); renderer.getSize(prevSize); const pr = renderer.getPixelRatio();
+  renderer.setPixelRatio(1); renderer.setSize(outW, outH, false);
+  renderer.render(snap, cam);
+  const url = renderer.domElement.toDataURL('image/png');
+  const w = prevSize.x || innerWidth, h = prevSize.y || innerHeight;
+  renderer.setPixelRatio(pr); renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  return url;
+};
+
+// ---- back-of-panel snapshot (panel + junction boxes/cables/connectors, no mount) ----
+window.__backShot = (azDeg = 210, elDeg = 12, dist = 2.9, outW = 1300, outH = 1000) => {
+  const grp = new THREE.Group();
+  grp.add(new THREE.Mesh(geo, [glassMat, edgeMat]));
+  const bs = new THREE.Mesh(new THREE.ShapeGeometry(roundedRectShape(W, H, R)), backMat);
+  bs.position.z = -D / 2 - 0.001; grp.add(bs);
+  grp.add(buildBackComponents());
+  const snap = new THREE.Scene();
+  snap.background = makeGradient('#f0f0f0', '#d2d2d2');
+  snap.environment = scene.environment;
+  snap.add(grp);
+  const k = new THREE.DirectionalLight(0xffffff, 2.4); k.position.set(-1.5, 2.2, -3.2); snap.add(k);
+  snap.add(new THREE.AmbientLight(0xffffff, 0.5));
+  const cam = new THREE.PerspectiveCamera(32, outW / outH, 0.01, 100);
+  const off = new THREE.Vector3().setFromSpherical(
+    new THREE.Spherical(dist, THREE.MathUtils.degToRad(90 - elDeg), THREE.MathUtils.degToRad(azDeg)));
+  cam.position.copy(off); cam.lookAt(0, 0, 0);
+  const prevSize = new THREE.Vector2(); renderer.getSize(prevSize); const pr = renderer.getPixelRatio();
+  renderer.setPixelRatio(1); renderer.setSize(outW, outH, false);
+  renderer.render(snap, cam);
+  const url = renderer.domElement.toDataURL('image/jpeg', 0.88);
+  const w = prevSize.x || innerWidth, h = prevSize.y || innerHeight;
+  renderer.setPixelRatio(pr); renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  return url;
+};
+
+window.__render = () => renderer.render(scene, camera);   // force a redraw (for off-screen capture)
 
 // ---- loop ----
 function animate() {
@@ -407,9 +733,10 @@ function makeGradient(top, bottom) {
   return t;
 }
 
-// all-black mono-PERC look: 6 columns x 16 rows of half-cut cells,
-// fine multi-busbar fingers, central ribbon gap. No golden label.
-function makeCellTexture() {
+// panel face texture: 6 columns x 16 rows of half-cut cells, multi-busbar fingers, central ribbon gap.
+// type 'black' = all-black mono-PERC; type 'classic' = blue cells + silver grid/frame + gold Solvio badge.
+function makeCellTexture(type = 'black') {
+  const P = CELL_PALETTES[type] || CELL_PALETTES.black;
   const cols = 6, rows = 16;
   const px = 1400;                                   // canvas width
   const py = Math.round(px * H / W);                 // keep face aspect
@@ -417,8 +744,8 @@ function makeCellTexture() {
   cv.width = px; cv.height = py;
   const ctx = cv.getContext('2d');
 
-  // base black laminate
-  ctx.fillStyle = '#040405';
+  // base laminate (black, or silver-white for classic — shows as the grid + frame)
+  ctx.fillStyle = P.base;
   ctx.fillRect(0, 0, px, py);
 
   // active (celled) area inside the border
@@ -436,17 +763,17 @@ function makeCellTexture() {
       let y = by + r * (ch + gap);
       if (r >= rows / 2) y += midGap;               // central split
 
-      // cell body — very dark with faint cool tint + subtle sheen gradient
+      // cell body — gradient sheen
       const grad = ctx.createLinearGradient(x, y, x + cw, y + ch);
-      grad.addColorStop(0, '#0c0d12');
-      grad.addColorStop(0.5, '#090a0e');
-      grad.addColorStop(1, '#0c0d12');
+      grad.addColorStop(0, P.cellA);
+      grad.addColorStop(0.5, P.cellB);
+      grad.addColorStop(1, P.cellA);
       ctx.fillStyle = grad;
       roundRect(ctx, x, y, cw, ch, cw * 0.03);
       ctx.fill();
 
       // multi-busbar fingers — fine vertical lines
-      ctx.strokeStyle = 'rgba(40,44,55,0.28)';
+      ctx.strokeStyle = P.finger;
       ctx.lineWidth = Math.max(1, px * 0.0006);
       const fingers = 12;
       for (let f = 1; f < fingers; f++) {
@@ -455,31 +782,46 @@ function makeCellTexture() {
       }
 
       // two horizontal busbar wires with solder dots
-      ctx.strokeStyle = 'rgba(70,76,90,0.30)';
+      ctx.strokeStyle = P.bus;
       ctx.lineWidth = Math.max(1, px * 0.0009);
       for (const bb of [0.33, 0.67]) {
         const yb = y + ch * bb;
         ctx.beginPath(); ctx.moveTo(x + cw*0.03, yb); ctx.lineTo(x + cw*0.97, yb); ctx.stroke();
       }
 
-      // corner chamfer marks (mono cell pseudo-square corners)
-      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-      ctx.lineWidth = Math.max(1, px * 0.0016);
-      const chm = cw * 0.10;
-      ctx.beginPath();
-      ctx.moveTo(x, y + chm); ctx.lineTo(x + chm, y);
-      ctx.moveTo(x + cw - chm, y); ctx.lineTo(x + cw, y + chm);
-      ctx.moveTo(x, y + ch - chm); ctx.lineTo(x + chm, y + ch);
-      ctx.moveTo(x + cw - chm, y + ch); ctx.lineTo(x + cw, y + ch - chm);
-      ctx.stroke();
+      // corner chamfer marks (mono cell pseudo-square corners) — skipped when palette cham is null
+      if (P.cham) {
+        ctx.strokeStyle = P.cham;
+        ctx.lineWidth = Math.max(1, px * 0.0016);
+        const chm = cw * 0.10;
+        ctx.beginPath();
+        ctx.moveTo(x, y + chm); ctx.lineTo(x + chm, y);
+        ctx.moveTo(x + cw - chm, y); ctx.lineTo(x + cw, y + chm);
+        ctx.moveTo(x, y + ch - chm); ctx.lineTo(x + chm, y + ch);
+        ctx.moveTo(x + cw - chm, y + ch); ctx.lineTo(x + cw, y + ch - chm);
+        ctx.stroke();
+      }
     }
   }
 
   // faint overall vignette toward edges
   const vg = ctx.createRadialGradient(px/2, py/2, py*0.2, px/2, py/2, py*0.75);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,0,0,0.35)');
+  vg.addColorStop(1, P.vignette);
   ctx.fillStyle = vg; ctx.fillRect(0, 0, px, py);
+
+  // gold "Solvio" badge (classic type), bottom-right of the portrait face
+  if (P.badge) {
+    const bxp = px * 0.70, byp = py * 0.80, br = px * 0.078;
+    const gg = ctx.createRadialGradient(bxp - br*0.35, byp - br*0.35, br*0.1, bxp, byp, br);
+    gg.addColorStop(0, '#f4dc94'); gg.addColorStop(0.55, '#dbb659'); gg.addColorStop(1, '#a67f2e');
+    ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(bxp, byp, br, 0, Math.PI*2); ctx.fill();
+    ctx.lineWidth = px * 0.004; ctx.strokeStyle = '#c9a24a'; ctx.stroke();
+    ctx.fillStyle = '#c14425';
+    ctx.font = `600 ${Math.round(br*0.52)}px -apple-system, Segoe UI, Roboto, sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Solvio', bxp, byp);
+  }
 
   const t = new THREE.CanvasTexture(cv);
   t.anisotropy = renderer.capabilities.getMaxAnisotropy();

@@ -282,7 +282,7 @@ function buildAssembly(vertical) {
       const Ctop = new THREE.Vector3(sx, PbackTop.y - n.z * (colFrontZ - PbackTop.z) / n.y, Pt.z - colBack);
       Tt.addScaledVector(u, (Ctop.y - Tt.y) / u.y);               // lower rail top to the column top
       const Cfoot = new THREE.Vector3(sx, -0.0125, Pt.z - colBack);
-      const BarRear = new THREE.Vector3(sx, 0, Pt.z - colBack);   // rear end under the column's center axis
+      const BarRear = new THREE.Vector3(sx, 0, colFrontZ);        // rear end butts flush against the column front face (no embedment)
       const Pback = Pb.clone().addScaledVector(n, -D / 2);
       const Ffoot = new THREE.Vector3(sx, 0, Pback.z - n.y * (0.0125 - Pback.y) / n.z);
       reg(makeBeam(Bb, Tt, 0.042, 0.025, metal), Bb.clone().lerp(Tt, 0.5));         // panel-mount rail

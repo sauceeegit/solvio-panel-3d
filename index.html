@@ -336,7 +336,7 @@ function buildBalcony(parent, railY, railZ) {
     // frameless glass balustrade below the rail
     const glassBal = new THREE.MeshPhysicalMaterial({ color: 0xdfeaf0, metalness: 0.0, roughness: 0.06,
       transmission: 0.9, thickness: 0.012, ior: 1.5, transparent: true, envMapIntensity: 1.0 });
-    const gTop = railCY - sq / 2 - 0.006, gBot = floorY + 0.02, gH = Math.max(0.05, gTop - gBot);
+    const gTop = railCY - sq / 2, gBot = floorY, gH = Math.max(0.05, gTop - gBot); // glass spans slab top up to the square bar
     const glass = new THREE.Mesh(new THREE.BoxGeometry(L, gH, 0.012), glassBal);
     glass.position.set(0, (gTop + gBot) / 2, railZ); g.add(glass);
   } else {
@@ -358,8 +358,11 @@ function buildBalcony(parent, railY, railZ) {
   }
   // concrete floor slab + building wall (floor top at floorY)
   const groundGrp = new THREE.Group(); groundGrp.name = 'balconyGround'; g.add(groundGrp);
-  const slab = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, 0.2, floorDepth), wallMatSolid); // match the opaque lower wall
-  slab.position.set(0, floorY - 0.1, railZ - floorDepth / 2 - 0.02);
+  const slabFront = railZ + 0.03;                      // floor reaches forward just up to the balcony railing
+  const slabBack  = railZ - 0.02 - floorDepth;         // keep the original back edge (at the wall)
+  const slabDepth = slabFront - slabBack;
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, 0.2, slabDepth), wallMatSolid); // match the opaque lower wall
+  slab.position.set(0, floorY - 0.1, (slabFront + slabBack) / 2);
   slab.receiveShadow = true; slab.castShadow = true; groundGrp.add(slab);
   const wallZ = railZ - floorDepth - 0.1;
   const wallTop = floorY + 1.6;                        // top lowered 1 m

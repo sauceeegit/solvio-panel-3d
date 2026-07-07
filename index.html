@@ -143,8 +143,9 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffe
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
-renderer.shadowMap.enabled = false;
+renderer.toneMappingExposure = 1.12;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
 // ---- scene + grey studio backdrop ----
@@ -153,7 +154,7 @@ const studioBg = makeGradient('#e7e7e7', '#c4c6c9');          // neutral studio 
 scene.background = studioBg;
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.02).texture;
 
 // ---- camera ----
 const camera = new THREE.PerspectiveCamera(38, innerWidth/innerHeight, 0.01, 100);
@@ -170,19 +171,20 @@ controls.target.set(0, 0.5, -0.05);
 const key = new THREE.DirectionalLight(0xffffff, 2.0);
 key.position.set(2.2, 3.0, 2.6);
 key.castShadow = true;
-key.shadow.mapSize.set(2048, 2048);
+key.shadow.mapSize.set(4096, 4096);
 key.shadow.camera.near = 0.5; key.shadow.camera.far = 12;
-key.shadow.camera.left = -2; key.shadow.camera.right = 2;
-key.shadow.camera.top = 2; key.shadow.camera.bottom = -2;
-key.shadow.bias = -0.0004;
+key.shadow.camera.left = -3; key.shadow.camera.right = 3;
+key.shadow.camera.top = 3; key.shadow.camera.bottom = -3;
+key.shadow.bias = -0.0003;
+key.shadow.normalBias = 0.02;
 scene.add(key);
 scene.add(new THREE.DirectionalLight(0xdfe6ef, 0.5).translateX(-3).translateY(1).translateZ(-2));
-scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+scene.add(new THREE.AmbientLight(0xffffff, 0.20));
 
 // ---- fixed sun (always on): warm directional light + glow, aimed at the tilted panel face ----
 const skyBg = makeGradient('#cfe1f2', '#f4eee2');            // soft daytime sky (cool top -> warm base)
 const sunPos = new THREE.Vector3(-2.6, 6.0, 1.4);          // high + to the side, so reflection isn't a full mirror wash
-const sunLight = new THREE.DirectionalLight(0xfff1d4, 0.8); // gentle warm sunlight
+const sunLight = new THREE.DirectionalLight(0xfff1d4, 1.1); // gentle warm sunlight
 sunLight.position.copy(sunPos); sunLight.target.position.set(0, 0.45, 0.1);
 const sunCv = document.createElement('canvas'); sunCv.width = sunCv.height = 256;
 { const g = sunCv.getContext('2d'); const rg = g.createRadialGradient(128, 128, 0, 128, 128, 128);
@@ -198,7 +200,7 @@ scene.background = skyBg;   // sun is always on
 // ---- ground shadow catcher ----
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(14, 14),
-  new THREE.ShadowMaterial({ opacity: 0.22 })
+  new THREE.ShadowMaterial({ opacity: 0.30 })
 );
 ground.rotation.x = -Math.PI/2;
 ground.position.y = 0;
@@ -230,21 +232,21 @@ const glassMat = new THREE.MeshPhysicalMaterial({
   map: cellTex,
   color: 0xffffff,
   metalness: 0.0,
-  roughness: 0.32,
-  clearcoat: 0.6,
-  clearcoatRoughness: 0.18,
-  reflectivity: 0.45,
-  envMapIntensity: 0.55,
+  roughness: 0.16,
+  clearcoat: 0.92,
+  clearcoatRoughness: 0.07,
+  reflectivity: 0.58,
+  envMapIntensity: 0.82,
 });
-const edgeMat = new THREE.MeshStandardMaterial({ color: 0xc2c3ca, metalness: 0.85, roughness: 0.28 }); // silver edge to show panel thinness
+const edgeMat = new THREE.MeshStandardMaterial({ color: 0xc2c3ca, metalness: 0.88, roughness: 0.20, envMapIntensity: 1.2 }); // silver edge to show panel thinness
 // backsheet on the panel rear — white for the classic type, dark for the all-black type
 const backMat = new THREE.MeshStandardMaterial({ color: 0x0e0e10, roughness: 0.72, metalness: 0.0, side: THREE.DoubleSide });
 function setBacksheetColor() { backMat.color.set(panelType === 'classic' ? 0xeef0f3 : 0x0e0e10); }
 setBacksheetColor();
 
 // =================== shared frame materials + helpers (used by every build) ===================
-const metal     = new THREE.MeshStandardMaterial({ color: 0xb6bbc2, metalness: 0.95, roughness: 0.32, envMapIntensity: 1.1 });
-const metalDark = new THREE.MeshStandardMaterial({ color: 0x848b94, metalness: 0.9,  roughness: 0.45 });
+const metal     = new THREE.MeshStandardMaterial({ color: 0xb8bdc4, metalness: 0.95, roughness: 0.24, envMapIntensity: 1.4 });
+const metalDark = new THREE.MeshStandardMaterial({ color: 0x848b94, metalness: 0.90, roughness: 0.34, envMapIntensity: 1.1 });
 
 function makeBeam(p1, p2, bw, bh, mat) {            // rectangular box-section strut between two points
   const dir = new THREE.Vector3().subVectors(p2, p1);

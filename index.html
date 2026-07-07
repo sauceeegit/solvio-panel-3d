@@ -28,7 +28,7 @@
     color: #2b2b2b; font-weight: 600; font-size: 15px; letter-spacing: .3px;
   }
   #title span { display:block; color:#7a7a7a; font-weight:400; font-size:11px; margin-top:2px; }
-  #spin, #frameBtn, #labelBtn, #modeBtn, #bldgBtn, #typeBtn, #railBtn, #sunBtn {
+  #spin, #frameBtn, #labelBtn, #sceneBtn, #modeBtn, #bldgBtn, #typeBtn, #railBtn {
     position: fixed; right: 16px; z-index: 10;
     font-size: 12px; color:#444; background: rgba(255,255,255,.6);
     border: 1px solid rgba(0,0,0,.08); border-radius: 8px; padding: 6px 10px; cursor: pointer;
@@ -37,11 +37,12 @@
   #spin { top: 16px; }
   #frameBtn { top: 52px; }
   #labelBtn { top: 88px; }
-  #modeBtn { top: 124px; }
-  #bldgBtn { top: 160px; }
-  #typeBtn { top: 196px; }
-  #railBtn { top: 232px; }
-  #sunBtn { top: 268px; }
+  #sceneBtn { top: 124px; }
+  #modeBtn { top: 160px; }
+  #bldgBtn { top: 196px; }
+  #typeBtn { top: 232px; }
+  #railBtn { top: 268px; }
+  #modeBtn:disabled, #bldgBtn:disabled, #railBtn:disabled { opacity: .4; cursor: default; }
   #bctrl {
     position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 10;
     display: flex; gap: 20px; align-items: flex-end; user-select: none;
@@ -49,29 +50,46 @@
     padding: 9px 16px; border-radius: 10px; border: 1px solid rgba(0,0,0,.07);
     font-size: 12px; color: #555;
   }
+  #bctrl .ctrlgroup { display: flex; gap: 20px; align-items: flex-end; }
   #bctrl label { display: flex; flex-direction: column; gap: 4px; }
   #bctrl b { color: #222; font-weight: 600; font-variant-numeric: tabular-nums; }
   #bctrl input[type=range] { width: 160px; accent-color: #e8392b; }
+  #bctrl .pcrow { display: flex; gap: 6px; align-items: center; height: 22px; }
+  #bctrl .pcrow button {
+    width: 26px; height: 22px; font-size: 15px; line-height: 1; color: #333;
+    border: 1px solid rgba(0,0,0,.15); border-radius: 6px; background: rgba(255,255,255,.7); cursor: pointer;
+  }
+  #bctrl .pcrow button:disabled { opacity: .35; cursor: default; }
+  #bctrl #pcMsg { color: #e8392b; font-size: 11px; }
 </style>
 </head>
 <body>
 <div id="app"></div>
-<div id="title">Solvio · N-Type Module<span>1761 × 1133 × 4.75 mm · balcony tilt-mount</span></div>
+<div id="title">Solvio 3D model</div>
 <div id="angle">—</div>
 <button id="spin">▶ Auto-rotate</button>
 <button id="frameBtn">☑ Frame</button>
 <button id="labelBtn">☐ Labels</button>
+<button id="sceneBtn">▤ Balcony</button>
 <button id="modeBtn">◹ Tilted</button>
-<button id="bldgBtn">☑ Balcony</button>
+<button id="bldgBtn">☑ Building</button>
 <button id="typeBtn">◧ All-black</button>
 <button id="railBtn">▥ Bar railing</button>
-<button id="sunBtn">☀ Sun</button>
-<div id="hud"><b>Drag</b> to orbit &nbsp;·&nbsp; <b>Scroll</b> to zoom &nbsp;·&nbsp; <b>Right-drag</b> to pan</div>
 <div id="bctrl">
-  <label>Balcony length &nbsp;<b><span id="lenOut">5.3</span> m</b>
-    <input id="lenSlider" type="range" min="1.8" max="12" step="0.1" value="5.3" autocomplete="off" /></label>
-  <label>Railing height &nbsp;<b><span id="depOut">0.95</span> m</b>
-    <input id="depSlider" type="range" min="0.7" max="1.4" step="0.05" value="0.95" autocomplete="off" /></label>
+  <span class="ctrlgroup" id="balconyCtrls">
+    <label>Balcony length &nbsp;<b><span id="lenOut">5.3</span> m</b>
+      <input id="lenSlider" type="range" min="1.8" max="12" step="0.1" value="5.3" autocomplete="off" /></label>
+    <label>Railing height &nbsp;<b><span id="depOut">0.95</span> m</b>
+      <input id="depSlider" type="range" min="0.7" max="1.4" step="0.05" value="0.95" autocomplete="off" /></label>
+  </span>
+  <span class="ctrlgroup" id="gardenCtrls" style="display:none">
+    <label><span id="gwLbl">Garden</span> width &nbsp;<b><span id="gwOut">5.0</span> m</b>
+      <input id="gwSlider" type="range" min="2" max="15" step="0.1" value="5" autocomplete="off" /></label>
+    <label id="glField"><span id="glLbl">Garden</span> length &nbsp;<b><span id="glOut">5.0</span> m</b>
+      <input id="glSlider" type="range" min="2" max="15" step="0.1" value="5" autocomplete="off" /></label>
+  </span>
+  <label>Panels &nbsp;<b><span id="pcOut">1</span></b>
+    <span class="pcrow"><button id="pcMinus" type="button">−</button><button id="pcPlus" type="button">+</button><small id="pcMsg"></small></span></label>
 </div>
 
 <script type="importmap">
@@ -99,10 +117,16 @@ const BORDER = 0.014; // black laminate border (no cells)
 // ---- balcony dimensions (live-adjustable via sliders) ----
 let balconyLen = 3 * H;    // handrail run along x (m)
 let railingHeight = 0.95;  // floor-to-top-rail height (m); depth fixed at 1.2 m
+let gardenWidth = 5, gardenLength = 5;   // garden plot (m): panels tile across width (x), wrap to rows in depth (z)
+let roofWidth = 7, roofLength = 7;       // rooftop building footprint (m)
+let facadeWidth = 6;                     // facade wall width (m); wall height fixed at 3 m
 const FIXED_RAILY = 0.945, FIXED_RAILZ = -0.367; // balcony stays here in both modes; panel+mount shift to hook onto it
 let buildingVisible = true; // wall + floor slab (the "building"); toggled by the Building button
 let panelType = 'black';    // 'black' (all-black mono) | 'classic' (blue cells, silver frame, gold badge)
 let balconyType = 'baluster'; // 'baluster' (metal bars) | 'glass' (frameless glass panel, top rail only)
+let panelCount = 1;           // number of panels laid along the balcony (default 1)
+const PANEL_GAP = 0.03;       // 3 cm horizontal gap (balcony row & garden columns)
+const GARDEN_ROW_GAP = 0.10;  // 10 cm depth gap between garden rows
 const CELL_PALETTES = {
   black:   { base: '#040405', cellA: '#0c0d12', cellB: '#090a0e',
              finger: 'rgba(40,44,55,0.28)', bus: 'rgba(70,76,90,0.30)', cham: 'rgba(0,0,0,0.55)',
@@ -155,8 +179,7 @@ scene.add(key);
 scene.add(new THREE.DirectionalLight(0xdfe6ef, 0.5).translateX(-3).translateY(1).translateZ(-2));
 scene.add(new THREE.AmbientLight(0xffffff, 0.25));
 
-// ---- fixed sun: warm directional light + glow, aimed at the tilted panel face ----
-let sunOn = true;
+// ---- fixed sun (always on): warm directional light + glow, aimed at the tilted panel face ----
 const skyBg = makeGradient('#cfe1f2', '#f4eee2');            // soft daytime sky (cool top -> warm base)
 const sunPos = new THREE.Vector3(-2.6, 6.0, 1.4);          // high + to the side, so reflection isn't a full mirror wash
 const sunLight = new THREE.DirectionalLight(0xfff1d4, 0.8); // gentle warm sunlight
@@ -170,8 +193,7 @@ const sunTex = new THREE.CanvasTexture(sunCv); sunTex.colorSpace = THREE.SRGBCol
 const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, transparent: true, depthWrite: false }));
 sunSprite.scale.set(3.0, 3.0, 1); sunSprite.position.copy(sunPos);
 const sunGroup = new THREE.Group(); sunGroup.add(sunLight, sunLight.target, sunSprite); scene.add(sunGroup);
-function applySun() { sunGroup.visible = sunOn; scene.background = sunOn ? skyBg : studioBg; }
-applySun();
+scene.background = skyBg;   // sun is always on
 
 // ---- ground shadow catcher ----
 const ground = new THREE.Mesh(
@@ -182,6 +204,14 @@ ground.rotation.x = -Math.PI/2;
 ground.position.y = 0;
 ground.receiveShadow = true;
 scene.add(ground);
+// garden lawn (Garden mode) + building (Rooftop mode)
+const gardenGroundMat = new THREE.MeshStandardMaterial({ color: 0x6f8f52, roughness: 0.95, metalness: 0.0 });
+const ROOF_HEIGHT = 3;    // rooftop building height (m)
+const brickMat   = new THREE.MeshStandardMaterial({ color: 0x9e3b31, roughness: 0.92, metalness: 0.0 }); // brick red walls
+const parapetMat = new THREE.MeshStandardMaterial({ color: 0xccc6b8, roughness: 0.90, metalness: 0.0 }); // concrete coping curb
+const windowMat  = new THREE.MeshStandardMaterial({ color: 0x223243, roughness: 0.15, metalness: 0.40, side: THREE.DoubleSide }); // glass
+const FACADE_WALL_H = 4.5;   // facade wall height (m)
+const facadeWallMat = new THREE.MeshStandardMaterial({ color: 0x7ba0c4, roughness: 0.9, metalness: 0.0 }); // darker blue wall
 
 // ---- the panel (built here, then mounted on the frame below) ----
 // front glass with procedural cell texture
@@ -320,8 +350,8 @@ function buildBalcony(parent, railY, railZ) {
   const rail     = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, metalness: 0.9,  roughness: 0.35, envMapIntensity: 1.0 });
   const railD    = new THREE.MeshStandardMaterial({ color: 0x7c828a, metalness: 0.85, roughness: 0.45 });
   const concrete = new THREE.MeshStandardMaterial({ color: 0xcdc8be, metalness: 0.0,  roughness: 0.95 });
-  const wallMat  = new THREE.MeshStandardMaterial({ color: 0xc9c3a2, metalness: 0.0,  roughness: 0.9, transparent: true, opacity: 0.5 }); // yellowish gray building, 50% transparent (above slab)
-  const wallMatSolid = new THREE.MeshStandardMaterial({ color: 0xc9c3a2, metalness: 0.0, roughness: 0.9 });                                 // opaque below the slab top
+  const wallMat  = new THREE.MeshStandardMaterial({ color: 0xa89f7a, metalness: 0.0,  roughness: 0.9, transparent: true, opacity: 0.5 }); // yellowish gray building, 50% transparent (above slab)
+  const wallMatSolid = new THREE.MeshStandardMaterial({ color: 0xa89f7a, metalness: 0.0, roughness: 0.9 });                                 // opaque below the slab top
 
   const tube = (len, r, mat) => {
     const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 20), mat);
@@ -401,10 +431,12 @@ function buildBackComponents() {
   return g;
 }
 
-// =================== build the panel + mount (tilted OR vertical) ===================
-function buildAssembly(vertical) {
-  const assembly = new THREE.Group();
-  scene.add(assembly);
+// =================== build ONE panel + mount unit (tilted / vertical / garden) ===================
+const GARDEN_ROT = -Math.PI / 2;                    // 90° anticlockwise: tips the A-frame onto its opposite edge
+function buildPanelUnit(mode) {
+  const unit = new THREE.Group();
+  const vertical = (mode === 'vertical');
+  const garden = (mode === 'garden' || mode === 'rooftop');   // ground/roof stand: tilted A-frame sat on a surface
 
   const TILT = vertical ? 0 : THREE.MathUtils.degToRad(35);
   const u = new THREE.Vector3(0, Math.cos(TILT), -Math.sin(TILT));   // up the panel slope
@@ -417,13 +449,13 @@ function buildAssembly(vertical) {
   mesh.castShadow = true; mesh.receiveShadow = true;
   const Cc = new THREE.Vector3(0, 0, FFz).add(u.clone().multiplyScalar(Ls / 2));
   if (vertical) Cc.y -= (Ls + HOOK_CY - RAIL_Y);    // drop the upright panel so its hooks hang on the handrail
-  const tilt = new THREE.Group(); tilt.position.copy(Cc); tilt.rotation.x = -TILT; assembly.add(tilt);
+  const tilt = new THREE.Group(); tilt.position.copy(Cc); tilt.rotation.x = -TILT; unit.add(tilt);
   const backsheet = new THREE.Mesh(new THREE.ShapeGeometry(roundedRectShape(W, H, R)), backMat);
   backsheet.position.z = -D / 2 - 0.001;             // solid backsheet just behind the rear face
   const land = new THREE.Group(); land.rotation.z = -Math.PI / 2; land.add(mesh); land.add(backsheet); land.add(buildBackComponents()); tilt.add(land);
 
-  const frame = new THREE.Group(); assembly.add(frame);
-  const labelGroup = new THREE.Group(); assembly.add(labelGroup);
+  const frame = new THREE.Group(); frame.name = 'frameGrp'; unit.add(frame);
+  const labelGroup = new THREE.Group(); labelGroup.name = 'labelGrp'; unit.add(labelGroup);
   let partNo = 0;
   let railY = 0, railZ = 0;                          // hook grab-line, captured below, used by the balcony
   const reg = (m, pos) => { frame.add(m); labelGroup.add(numberSprite(pos, String(++partNo))); return m; };
@@ -462,7 +494,7 @@ function buildAssembly(vertical) {
       reg(col, Cfoot.clone().lerp(Ctop, 0.5));                                       // vertical column
       reg(makeBeam(BarRear, Ffoot, 0.040, 0.024, metalDark), BarRear.clone().lerp(Ffoot, 0.5)); // base bar 40 x 24mm (1mm narrower per side than rail, sits within it)
       const hookTop = Ctop.clone(); hookTop.z -= (0.0125 + 0.0025);
-      reg(makeHook(hookTop), hookTop.clone().add(new THREE.Vector3(0, 0.10, -0.03))); // hook
+      if (!garden) reg(makeHook(hookTop), hookTop.clone().add(new THREE.Vector3(0, 0.10, -0.03))); // hook (none in garden)
       railY = hookTop.y + HOOK_CY; railZ = hookTop.z - HOOK_R;
     }
   }
@@ -478,18 +510,168 @@ function buildAssembly(vertical) {
     reg(makeBeam(rL, rR, 0.025, 0.025, metalDark), rL.clone().lerp(rR, 0.5));
   }
 
-  // keep the balcony in a FIXED spot in both modes; shift the panel + mount so its hooks reach it
-  const dy = FIXED_RAILY - railY, dz = FIXED_RAILZ - railZ;
-  for (const grp of [tilt, frame, labelGroup]) { grp.position.y += dy; grp.position.z += dz; }
-  lastRailY = FIXED_RAILY; lastRailZ = FIXED_RAILZ;
-  buildBalcony(assembly, FIXED_RAILY, FIXED_RAILZ);
+  if (garden) {
+    // sit on the ground on the opposite edge, but keep the panel facing the SAME way as the balcony (no flip)
+    const qTilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), GARDEN_ROT);
+    const qYaw  = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+    unit.quaternion.copy(qYaw.multiply(qTilt));   // tilt onto the opposite edge, then yaw 180° to face the viewer
+    unit.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(unit);
+    unit.position.y = -box.min.y;
+  } else {
+    // keep the balcony in a FIXED spot in both modes; shift the panel + mount so its hooks reach it
+    const dy = FIXED_RAILY - railY, dz = FIXED_RAILZ - railZ;
+    for (const grp of [tilt, frame, labelGroup]) { grp.position.y += dy; grp.position.z += dz; }
+    lastRailY = FIXED_RAILY; lastRailZ = FIXED_RAILZ;
+  }
 
-  return { assembly, frame, labelGroup };
+  return unit;
 }
 
-let verticalMode = false, frameVisible = true, labelsVisible = false;
-let current = buildAssembly(verticalMode);
-current.labelGroup.visible = labelsVisible;   // hidden by default
+// measure a garden unit's ground footprint once (x = panel width, z = stand depth)
+const GARDEN_SPAN_X = (() => { const u = buildPanelUnit('garden'); u.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(u); return b.max.x - b.min.x; })();
+const GARDEN_SPAN_Z = (() => { const u = buildPanelUnit('garden'); u.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(u); return b.max.z - b.min.z; })();
+
+// active plot size: garden, rooftop and facade keep their own width (and length where relevant)
+function plotW() { return sceneMode === 'rooftop' ? roofWidth : sceneMode === 'facade' ? facadeWidth : gardenWidth; }
+function plotL() { return sceneMode === 'rooftop' ? roofLength : gardenLength; }
+// facade capacity: a single centred row of vertical (portrait) panels across the wall width
+function facadePerRow() { return Math.max(1, Math.floor((facadeWidth + PANEL_GAP) / (W + PANEL_GAP))); }
+
+// garden/roof grid capacity: panels per row across the width, and rows down the length
+function gardenGrid() {
+  const perRow = Math.max(1, Math.floor((plotW() + PANEL_GAP)      / (GARDEN_SPAN_X + PANEL_GAP)));
+  const rows   = Math.max(1, Math.floor((plotL() + GARDEN_ROW_GAP) / (GARDEN_SPAN_Z + GARDEN_ROW_GAP)));
+  return { perRow, rows };
+}
+
+// rooftop building: brick-red walls + windows + a 0.5 m parapet curb around the roof edge
+function buildRoofBuilding(cx, cz, w, l) {
+  const g = new THREE.Group(); g.name = 'roofBuilding'; g.position.set(cx, 0, cz);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, ROOF_HEIGHT, l), brickMat);
+  body.position.y = ROOF_HEIGHT / 2; body.receiveShadow = true; g.add(body);
+  // parapet curb (0.5 m) on the four roof edges
+  const pH = 0.5, pT = 0.15, yP = ROOF_HEIGHT + pH / 2;
+  const curb = (sx, sz, x, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(sx, pH, sz), parapetMat); m.position.set(x, yP, z); g.add(m); };
+  curb(w, pT, 0,  l / 2 - pT / 2); curb(w, pT, 0, -l / 2 + pT / 2);   // front / back
+  curb(pT, l, w / 2 - pT / 2, 0);  curb(pT, l, -w / 2 + pT / 2, 0);   // right / left
+  // windows: a row on each wall
+  const winW = 1.1, winH = 1.4, wy = 1.5, off = 0.03;
+  const place = (len) => { const n = Math.max(1, Math.floor(len / 2.4)); const span = len - winW - 0.8;
+    return Array.from({ length: n }, (_, i) => n === 1 ? 0 : -span / 2 + i * span / (n - 1)); };
+  for (const s of [1, -1]) for (const x of place(w)) {   // front (+z) / back (-z)
+    const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), windowMat);
+    win.position.set(x, wy, s * (l / 2 + off)); if (s < 0) win.rotation.y = Math.PI; g.add(win);
+  }
+  for (const s of [1, -1]) for (const z of place(l)) {   // right (+x) / left (-x)
+    const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), windowMat);
+    win.position.set(s * (w / 2 + off), wy, z); win.rotation.y = s * Math.PI / 2; g.add(win);
+  }
+  return g;
+}
+
+// one vertical (portrait) panel for the Facade, flush-mounted facing +z (origin at panel centre)
+function buildFacadePanel() {
+  const unit = new THREE.Group();
+  const mesh = new THREE.Mesh(geo, [glassMat, edgeMat]); mesh.position.z = -D / 2;   // centre the laminate on z=0
+  const backsheet = new THREE.Mesh(new THREE.ShapeGeometry(roundedRectShape(W, H, R)), backMat);
+  backsheet.position.z = -D / 2 - 0.001;
+  unit.add(mesh, backsheet);
+  // mounting rails + standoffs behind (toggled by the Frame button)
+  const frame = new THREE.Group(); frame.name = 'frameGrp';
+  for (const fy of [-0.45, 0.45]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(W * 0.9, 0.04, 0.03), metal);
+    rail.position.set(0, fy, -D / 2 - 0.05); frame.add(rail);
+    for (const fx of [-0.4, 0.4]) {
+      const st = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.06), metal);
+      st.position.set(fx, fy, -D / 2 - 0.05); frame.add(st);
+    }
+  }
+  unit.add(frame);
+  return unit;
+}
+// largest number of panels the current setting can hold
+function maxPanels() {
+  if (sceneMode === 'facade') return facadePerRow();
+  if (sceneMode !== 'balcony') { const g = gardenGrid(); return g.perRow * g.rows; }
+  return Math.max(1, Math.floor((balconyLen + PANEL_GAP) / (H + PANEL_GAP)));
+}
+
+// =================== lay N panel units along the balcony, then build the balcony ===================
+function buildAssembly(mode) {
+  const assembly = new THREE.Group();
+  scene.add(assembly);
+  const N = panelCount = Math.max(1, Math.min(panelCount, maxPanels()));   // clamp to what fits
+  const base = (mode === 'facade') ? buildFacadePanel() : buildPanelUnit(mode);
+
+  if (mode === 'facade') {
+    // vertical panels flush on a light-blue wall, single centred row (1st panel in the middle)
+    const stepX = W + PANEL_GAP, total = N * W + (N - 1) * PANEL_GAP, x0 = -total / 2 + W / 2;
+    const yMid = FACADE_WALL_H / 2;
+    for (let i = 0; i < N; i++) {
+      const u = (i === 0) ? base : base.clone(true);
+      u.position.set(x0 + i * stepX, yMid, 0);      // panels stand off the wall front (z ≈ 0)
+      assembly.add(u);
+    }
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(facadeWidth, FACADE_WALL_H, 0.2), facadeWallMat);
+    wall.position.set(0, FACADE_WALL_H / 2, -0.18);  // front face ~8 cm behind the panels
+    wall.receiveShadow = true; wall.name = 'facadeWall';
+    assembly.add(wall);
+  } else if (mode === 'garden' || mode === 'rooftop') {
+    // tile panels across the width (x, 3 cm gaps); when a row fills the width, wrap to a new row behind (z, 10 cm gaps)
+    const onRoof = (mode === 'rooftop');
+    const yLift = onRoof ? ROOF_HEIGHT : 0;          // rooftop lifts the array onto the building
+    const dropY = base.position.y;                   // ground-drop from buildPanelUnit
+    const { perRow } = gardenGrid();
+    const rowsUsed = Math.ceil(N / perRow);
+    const stepX = GARDEN_SPAN_X + PANEL_GAP, stepZ = GARDEN_SPAN_Z + GARDEN_ROW_GAP;
+    const gridD = rowsUsed * GARDEN_SPAN_Z + (rowsUsed - 1) * GARDEN_ROW_GAP;
+    const z0 = -gridD / 2 + GARDEN_SPAN_Z / 2;
+    for (let i = 0; i < N; i++) {
+      const row = Math.floor(i / perRow), col = i % perRow;
+      const inRow = (row < rowsUsed - 1) ? perRow : (N - perRow * (rowsUsed - 1));
+      const rowW = inRow * GARDEN_SPAN_X + (inRow - 1) * PANEL_GAP;
+      const x0 = -rowW / 2 + GARDEN_SPAN_X / 2;
+      const u = (i === 0) ? base : base.clone(true);
+      u.position.x = x0 + col * stepX;
+      u.position.z = z0 + row * stepZ;               // rows stack toward the back (+z)
+      u.position.y = dropY + yLift;                  // on the ground, or on the roof
+      assembly.add(u);
+    }
+    const fb = new THREE.Box3().setFromObject(assembly);
+    const cx = (fb.min.x + fb.max.x) / 2, cz = (fb.min.z + fb.max.z) / 2;
+    if (onRoof) {
+      assembly.add(buildRoofBuilding(cx, cz, plotW(), plotL()));   // brick building, panels on the roof
+    } else {
+      // lawn sized to the garden plot, centred on the array
+      const gg = new THREE.Mesh(new THREE.PlaneGeometry(plotW(), plotL()), gardenGroundMat);
+      gg.rotation.x = -Math.PI / 2; gg.receiveShadow = true; gg.name = 'gardenGround';
+      gg.position.set(cx, 0, cz);
+      assembly.add(gg);
+    }
+  } else {
+    const pitch = H + PANEL_GAP, total = N * H + (N - 1) * PANEL_GAP, x0 = -total / 2 + H / 2;
+    for (let i = 0; i < N; i++) {
+      const u = (i === 0) ? base : base.clone(true);
+      u.position.x = x0 + i * pitch;                 // centred row along the balcony (x)
+      assembly.add(u);
+    }
+    buildBalcony(assembly, FIXED_RAILY, FIXED_RAILZ);
+  }
+  return { assembly };
+}
+
+// toggle mount frames / number labels across ALL panel units
+function setFrameVisible(v)  { current.assembly.traverse(o => { if (o.name === 'frameGrp') o.visible = v; }); }
+function setLabelsVisible(v) { current.assembly.traverse(o => { if (o.name === 'labelGrp') o.visible = v; }); }
+
+let sceneMode = 'balcony', orient = 'tilted', frameVisible = true, labelsVisible = false;
+// scene: 'balcony' (tilted|vertical), 'garden', or 'rooftop'.  effMode() = what the builder gets.
+function effMode() { return sceneMode === 'balcony' ? orient : sceneMode; }
+let current = buildAssembly(effMode());
+setLabelsVisible(labelsVisible);   // labels hidden by default
 
 // ---- auto-rotate toggle ----
 let spinning = false;
@@ -504,24 +686,24 @@ controls.addEventListener('start', () => { if (spinning) { spinning = false; spi
 const frameBtn = document.getElementById('frameBtn');
 frameBtn.onclick = () => {
   frameVisible = !frameVisible;
-  current.frame.visible = frameVisible;
+  setFrameVisible(frameVisible);
   frameBtn.textContent = (frameVisible ? '☑' : '☐') + ' Frame';
 };
 
 const labelBtn = document.getElementById('labelBtn');
 labelBtn.onclick = () => {
   labelsVisible = !labelsVisible;
-  current.labelGroup.visible = labelsVisible;
+  setLabelsVisible(labelsVisible);
   labelBtn.textContent = (labelsVisible ? '☑' : '☐') + ' Labels';
 };
 
-// ---- whole-balcony show/hide toggle ----
+// ---- building (wall + floor + railing) show/hide toggle ----
 const bldgBtn = document.getElementById('bldgBtn');
 bldgBtn.onclick = () => {
   buildingVisible = !buildingVisible;
   const b = current.assembly.getObjectByName('balcony');
   if (b) b.visible = buildingVisible;
-  bldgBtn.textContent = (buildingVisible ? '☑' : '☐') + ' Balcony';
+  bldgBtn.textContent = (buildingVisible ? '☑' : '☐') + ' Building';
 };
 
 // ---- panel type toggle (swaps the cell face texture) ----
@@ -544,23 +726,37 @@ railBtn.onclick = () => {
   railBtn.textContent = (balconyType === 'baluster') ? '▥ Bar railing' : '▢ Glass railing';
 };
 
-// ---- sun on/off toggle ----
-const sunBtn = document.getElementById('sunBtn');
-sunBtn.onclick = () => {
-  sunOn = !sunOn;
-  applySun();
-  sunBtn.textContent = (sunOn ? '☀' : '☁') + ' Sun';
+// ---- scene toggle: Balcony <-> Garden ----
+const sceneBtn = document.getElementById('sceneBtn');
+const modeBtn = document.getElementById('modeBtn');
+const SCENE_ORDER = ['balcony', 'garden', 'rooftop', 'facade'];
+const SCENE_LABEL = { balcony: '▤ Balcony', garden: '⛰ Garden', rooftop: '▦ Rooftop', facade: '▥ Facade' };
+sceneBtn.onclick = () => {
+  sceneMode = SCENE_ORDER[(SCENE_ORDER.indexOf(sceneMode) + 1) % SCENE_ORDER.length];
+  rebuildAll();
+  sceneBtn.textContent = SCENE_LABEL[sceneMode];
+  const notBalcony = (sceneMode !== 'balcony');   // tilt/vertical, building & railing apply only on the balcony
+  modeBtn.disabled = notBalcony; bldgBtn.disabled = notBalcony; railBtn.disabled = notBalcony;
+  document.getElementById('balconyCtrls').style.display = notBalcony ? 'none' : 'flex';
+  document.getElementById('gardenCtrls').style.display  = notBalcony ? 'flex' : 'none';
+  const plotLbl = sceneMode === 'rooftop' ? 'Roof' : sceneMode === 'facade' ? 'Wall' : 'Garden';
+  document.getElementById('gwLbl').textContent = plotLbl;
+  document.getElementById('glLbl').textContent = plotLbl;
+  document.getElementById('glField').style.display = (sceneMode === 'facade') ? 'none' : 'flex';   // facade: width only
+  if (notBalcony) {
+    gwSlider.value = plotW(); gwOut.textContent = plotW().toFixed(1);
+    glSlider.value = plotL(); glOut.textContent = plotL().toFixed(1);
+  }
+  frameScene();
+  updatePcUI();
 };
 
-// ---- tilted / vertical mode toggle (rebuilds the model) ----
-const modeBtn = document.getElementById('modeBtn');
+// ---- orientation toggle (Balcony only): Tilted <-> Vertical ----
 modeBtn.onclick = () => {
-  verticalMode = !verticalMode;
-  scene.remove(current.assembly);
-  current = buildAssembly(verticalMode);
-  current.frame.visible = frameVisible;
-  current.labelGroup.visible = labelsVisible;
-  modeBtn.textContent = verticalMode ? '▯ Vertical' : '◹ Tilted';  // camera/target unchanged so the balcony stays put
+  if (sceneMode === 'garden') return;
+  orient = (orient === 'tilted') ? 'vertical' : 'tilted';
+  rebuildAll();
+  modeBtn.textContent = (orient === 'tilted') ? '◹ Tilted' : '▯ Vertical';
 };
 
 // place the camera at a precise azimuth/elevation (used by the reference-render helper)
@@ -570,8 +766,17 @@ function setView(azDeg, elDeg, dist) {
   camera.position.copy(controls.target).add(off);
   controls.update();
 }
+// frame the camera to suit the current scene (balcony = fixed; garden/rooftop = fit the array box)
+function frameScene() {
+  if (sceneMode === 'balcony') { controls.target.set(0, 0.5, 0); setView(40, 12, 5.6); return; }
+  const box = new THREE.Box3().setFromObject(current.assembly);
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  controls.target.copy(c);
+  if (sceneMode === 'facade') setView(22, 6, Math.max(s.x, s.y) * 1.15 + s.z + 1);   // near head-on
+  else setView(40, sceneMode === 'rooftop' ? 22 : 18, Math.max(s.x, s.z) * 1.15 + s.y);
+}
 // open framed on the balcony
-controls.target.set(0, 0.5, 0); setView(40, 12, 5.6);
+frameScene();
 
 // isolated reference render of just the panel + mount (used as a style reference for AI compositing)
 window.__refShot = (azDeg = 35, elDeg = 12, dist = 2.4, W = 1200, H = 820) => {
@@ -579,18 +784,18 @@ window.__refShot = (azDeg = 35, elDeg = 12, dist = 2.4, W = 1200, H = 820) => {
   const prevSize = new THREE.Vector2(); renderer.getSize(prevSize);
   const prevRatio = renderer.getPixelRatio(), prevAspect = camera.aspect;
   const prev = { bg: scene.background, ground: ground.visible, balcony: balcony ? balcony.visible : null,
-                 labels: current.labelGroup.visible, tx: controls.target.clone(),
+                 labels: labelsVisible, tx: controls.target.clone(),
                  pos: camera.position.clone() };
   scene.background = makeGradient('#f2f2f2', '#dadde0');     // clean neutral studio backdrop
   ground.visible = false; if (balcony) balcony.visible = false;
-  current.labelGroup.visible = false;
+  setLabelsVisible(false);
   renderer.setPixelRatio(1); renderer.setSize(W, H, false);  // fixed render size, independent of the window
   camera.aspect = W / H; camera.updateProjectionMatrix();
   controls.target.set(0, 0.46, 0); setView(azDeg, elDeg, dist);
   renderer.render(scene, camera);
   const url = renderer.domElement.toDataURL('image/jpeg', 0.9);
   scene.background = prev.bg; ground.visible = prev.ground; if (balcony) balcony.visible = prev.balcony;
-  current.labelGroup.visible = prev.labels;
+  setLabelsVisible(prev.labels);
   if (prevSize.x > 0 && prevSize.y > 0) {                    // restore the live view if it had a real size
     renderer.setPixelRatio(prevRatio); renderer.setSize(prevSize.x, prevSize.y, false);
     camera.aspect = prevAspect; camera.updateProjectionMatrix();
@@ -602,10 +807,10 @@ window.__refShot = (azDeg = 35, elDeg = 12, dist = 2.4, W = 1200, H = 820) => {
 // export the panel + mount (no balcony/floor/wall/labels) as a binary .glb for Blender/KeyShot
 window.__exportGLB = () => new Promise((resolve, reject) => {
   const balcony = current.assembly.getObjectByName('balcony');
-  const prevB = balcony ? balcony.visible : null, prevL = current.labelGroup.visible;
+  const prevB = balcony ? balcony.visible : null, prevL = labelsVisible;
   if (balcony) balcony.visible = false;                       // exclude railing/floor/wall via onlyVisible
-  current.labelGroup.visible = false;                         // exclude the numbered labels
-  const restore = () => { if (balcony) balcony.visible = prevB; current.labelGroup.visible = prevL; };
+  setLabelsVisible(false);                                    // exclude the numbered labels
+  const restore = () => { if (balcony) balcony.visible = prevB; setLabelsVisible(prevL); };
   new GLTFExporter().parse(current.assembly, async (result) => {
     restore();
     const dataUrl = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(new Blob([result], { type: 'model/gltf-binary' })); });
@@ -635,14 +840,56 @@ function disposeGroup(g) {
 function rebuildBalcony() {
   const old = current.assembly.getObjectByName('balcony');
   if (old) { current.assembly.remove(old); disposeGroup(old); }
-  buildBalcony(current.assembly, lastRailY, lastRailZ);
+  if (sceneMode === 'balcony') buildBalcony(current.assembly, lastRailY, lastRailZ);   // balcony only
+}
+function rebuildAll() {                       // full rebuild (panel count / mode changes)
+  scene.remove(current.assembly);
+  current = buildAssembly(effMode());
+  setFrameVisible(frameVisible);
+  setLabelsVisible(labelsVisible);
 }
 const lenSlider = document.getElementById('lenSlider'), depSlider = document.getElementById('depSlider');
 const lenOut = document.getElementById('lenOut'), depOut = document.getElementById('depOut');
 lenSlider.value = balconyLen;    lenOut.textContent = balconyLen.toFixed(1);
 depSlider.value = railingHeight;  depOut.textContent = railingHeight.toFixed(2);
-lenSlider.oninput = () => { balconyLen = parseFloat(lenSlider.value); lenOut.textContent = balconyLen.toFixed(1); rebuildBalcony(); };
+lenSlider.oninput = () => {
+  balconyLen = parseFloat(lenSlider.value); lenOut.textContent = balconyLen.toFixed(1);
+  rebuildBalcony();
+  if (panelCount > maxPanels()) { panelCount = maxPanels(); rebuildAll(); }   // shrink array to fit
+  updatePcUI();
+};
 depSlider.oninput = () => { railingHeight = parseFloat(depSlider.value); depOut.textContent = railingHeight.toFixed(2); rebuildBalcony(); };
+
+// ---- garden plot size (rebuilds the whole ground array) ----
+const gwSlider = document.getElementById('gwSlider'), glSlider = document.getElementById('glSlider');
+const gwOut = document.getElementById('gwOut'), glOut = document.getElementById('glOut');
+gwSlider.oninput = () => {
+  const v = parseFloat(gwSlider.value);
+  if (sceneMode === 'rooftop') roofWidth = v; else if (sceneMode === 'facade') facadeWidth = v; else gardenWidth = v;
+  gwOut.textContent = v.toFixed(1);
+  if (panelCount > maxPanels()) panelCount = maxPanels();
+  rebuildAll(); updatePcUI();
+};
+glSlider.oninput = () => {
+  const v = parseFloat(glSlider.value); if (sceneMode === 'rooftop') roofLength = v; else gardenLength = v;
+  glOut.textContent = v.toFixed(1);
+  if (panelCount > maxPanels()) panelCount = maxPanels();
+  rebuildAll(); updatePcUI();
+};
+
+// ---- panel-count control (checks the balcony can hold the count before adding) ----
+const pcOut = document.getElementById('pcOut');
+const pcMinus = document.getElementById('pcMinus'), pcPlus = document.getElementById('pcPlus');
+const pcMsg = document.getElementById('pcMsg');
+function updatePcUI() {
+  pcOut.textContent = panelCount;
+  pcMinus.disabled = panelCount <= 1;
+  pcPlus.disabled = panelCount >= maxPanels();
+  pcMsg.textContent = pcPlus.disabled ? (sceneMode + ' full') : '';
+}
+pcPlus.onclick  = () => { if (panelCount < maxPanels()) { panelCount++; rebuildAll(); updatePcUI(); } };
+pcMinus.onclick = () => { if (panelCount > 1)           { panelCount--; rebuildAll(); updatePcUI(); } };
+updatePcUI();
 
 // ---- portrait product snapshot of just the panel module (with cell grid) ----
 window.__panelSnap = (azDeg = -50, rollDeg = -15, dist = 4.4, focusY = 0, outW = 1000, outH = 1300) => {

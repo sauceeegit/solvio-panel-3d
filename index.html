@@ -206,6 +206,7 @@ ground.receiveShadow = true;
 scene.add(ground);
 // garden lawn (Garden mode) + building (Rooftop mode)
 const gardenGroundMat = new THREE.MeshStandardMaterial({ color: 0x6f8f52, roughness: 0.95, metalness: 0.0 });
+const grassMat = new THREE.MeshStandardMaterial({ color: 0x4c7a30, roughness: 1.0, metalness: 0.0 }); // grass tufts
 const ROOF_HEIGHT = 3;    // rooftop building height (m)
 const brickMat   = new THREE.MeshStandardMaterial({ color: 0x9e3b31, roughness: 0.92, metalness: 0.0 }); // brick red walls
 const parapetMat = new THREE.MeshStandardMaterial({ color: 0xccc6b8, roughness: 0.90, metalness: 0.0 }); // concrete coping curb
@@ -592,6 +593,28 @@ function buildFacadePanel() {
   unit.add(frame);
   return unit;
 }
+
+// small grass tufts around the garden lawn edge
+const grassBladeGeo = new THREE.ConeGeometry(0.02, 0.17, 4);
+function buildGrassEdges(w, l) {
+  const g = new THREE.Group(); g.name = 'gardenGrass';
+  const tuft = (x, z) => {
+    const t = new THREE.Group(); t.position.set(x, 0, z);
+    const n = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) {
+      const b = new THREE.Mesh(grassBladeGeo, grassMat);
+      b.position.set((Math.random() - 0.5) * 0.07, 0.08, (Math.random() - 0.5) * 0.07);
+      b.rotation.set((Math.random() - 0.5) * 0.5, Math.random() * Math.PI, (Math.random() - 0.5) * 0.5);
+      b.scale.y = 0.7 + Math.random() * 0.8;
+      t.add(b);
+    }
+    g.add(t);
+  };
+  const step = 0.4;
+  for (let x = -w / 2; x <= w / 2 + 1e-6; x += step) { tuft(x, -l / 2); tuft(x, l / 2); }
+  for (let z = -l / 2 + step; z < l / 2 - 1e-6; z += step) { tuft(-w / 2, z); tuft(w / 2, z); }
+  return g;
+}
 // largest number of panels the current setting can hold
 function maxPanels() {
   if (sceneMode === 'facade') return facadePerRow();
@@ -650,6 +673,8 @@ function buildAssembly(mode) {
       gg.rotation.x = -Math.PI / 2; gg.receiveShadow = true; gg.name = 'gardenGround';
       gg.position.set(cx, 0, cz);
       assembly.add(gg);
+      const grass = buildGrassEdges(plotW(), plotL());   // small grass tufts along the lawn edges
+      grass.position.set(cx, 0, cz); assembly.add(grass);
     }
   } else {
     const pitch = H + PANEL_GAP, total = N * H + (N - 1) * PANEL_GAP, x0 = -total / 2 + H / 2;

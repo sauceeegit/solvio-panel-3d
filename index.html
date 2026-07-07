@@ -733,16 +733,15 @@ bldgBtn.onclick = () => {
 
 // ---- panel type toggle (swaps the cell face texture) ----
 const typeBtn = document.getElementById('typeBtn');
-function setPanelType(type) {
-  panelType = type;
+typeBtn.onclick = () => {
+  panelType = (panelType === 'black') ? 'classic' : 'black';
   const t = makeCellTexture(panelType);
   t.colorSpace = THREE.SRGBColorSpace; t.repeat.set(1 / W, 1 / H); t.offset.set(0.5, 0.5);
   cellTex.dispose(); cellTex = t;
   glassMat.map = t; glassMat.needsUpdate = true;
   setBacksheetColor();                               // white back for classic, dark for all-black
   typeBtn.textContent = (panelType === 'black') ? '◧ All-black' : '◨ Classic';
-}
-typeBtn.onclick = () => setPanelType(panelType === 'black' ? 'classic' : 'black');
+};
 
 // ---- balcony railing type toggle (rebuilds the balcony) ----
 const railBtn = document.getElementById('railBtn');
@@ -757,8 +756,8 @@ const sceneBtn = document.getElementById('sceneBtn');
 const modeBtn = document.getElementById('modeBtn');
 const SCENE_ORDER = ['balcony', 'garden', 'rooftop', 'facade'];
 const SCENE_LABEL = { balcony: '▤ Balcony', garden: '⛰ Garden', rooftop: '▦ Rooftop', facade: '▥ Facade' };
-function setScene(mode) {
-  sceneMode = mode;
+sceneBtn.onclick = () => {
+  sceneMode = SCENE_ORDER[(SCENE_ORDER.indexOf(sceneMode) + 1) % SCENE_ORDER.length];
   rebuildAll();
   sceneBtn.textContent = SCENE_LABEL[sceneMode];
   const notBalcony = (sceneMode !== 'balcony');   // tilt/vertical, building & railing apply only on the balcony
@@ -775,8 +774,7 @@ function setScene(mode) {
   }
   frameScene();
   updatePcUI();
-}
-sceneBtn.onclick = () => setScene(SCENE_ORDER[(SCENE_ORDER.indexOf(sceneMode) + 1) % SCENE_ORDER.length]);
+};
 
 // ---- orientation toggle (Balcony only): Tilted <-> Vertical ----
 modeBtn.onclick = () => {
@@ -793,9 +791,23 @@ function setView(azDeg, elDeg, dist) {
   camera.position.copy(controls.target).add(off);
   controls.update();
 }
-// frame the camera to suit the current scene (balcony = fixed; garden/rooftop = fit the array box)
+// distance needed to keep the whole array in frame
+function fitDistance() {
+  if (sceneMode === 'balcony') {
+    const span = panelCount * H + (panelCount - 1) * PANEL_GAP;   // panel row width along the balcony
+    return Math.max(5.6, 2.4 + span);
+  }
+  const s = new THREE.Box3().setFromObject(current.assembly).getSize(new THREE.Vector3());
+  return Math.max(5.6, Math.max(s.x, s.y, s.z) * 1.1 + 1.5);
+}
+// dolly OUT to fit (keeps the current viewing angle; never zooms in on the user)
+function dollyToFit() {
+  const off = camera.position.clone().sub(controls.target), need = fitDistance();
+  if (off.length() < need) { off.setLength(need); camera.position.copy(controls.target).add(off); controls.update(); }
+}
+// frame the camera to suit the current scene
 function frameScene() {
-  if (sceneMode === 'balcony') { controls.target.set(0, 0.5, 0); setView(40, 12, 5.6); return; }
+  if (sceneMode === 'balcony') { controls.target.set(0, 0.5, 0); setView(40, 12, fitDistance()); return; }
   const box = new THREE.Box3().setFromObject(current.assembly);
   const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
   controls.target.copy(c);
@@ -914,34 +926,9 @@ function updatePcUI() {
   pcPlus.disabled = panelCount >= maxPanels();
   pcMsg.textContent = pcPlus.disabled ? (sceneMode + ' full') : '';
 }
-function setPanelCount(n) {
-  panelCount = Math.max(1, Math.min(maxPanels(), Math.round(n) || 1));
-  rebuildAll(); updatePcUI();
-}
-pcPlus.onclick  = () => { if (panelCount < maxPanels()) setPanelCount(panelCount + 1); };
-pcMinus.onclick = () => { if (panelCount > 1)           setPanelCount(panelCount - 1); };
+pcPlus.onclick  = () => { if (panelCount < maxPanels()) { panelCount++; rebuildAll(); updatePcUI(); dollyToFit(); } };
+pcMinus.onclick = () => { if (panelCount > 1)           { panelCount--; rebuildAll(); updatePcUI(); dollyToFit(); } };
 updatePcUI();
-
-// ---- external control API: let an embedding page (the configurator) drive the model ----
-// balcony configurator ids -> 3D scene ids (flat roof -> rooftop; white/dark -> classic/black)
-function solvioApply(cfg) {
-  if (!cfg || typeof cfg !== 'object') return;
-  const LOC = { balcony: 'balcony', garden: 'garden', flatroof: 'rooftop', rooftop: 'rooftop', facade: 'facade' };
-  const loc = LOC[cfg.location];
-  if (loc && loc !== sceneMode) setScene(loc);
-  if (cfg.panel) {
-    const t = cfg.panel === 'dark' ? 'black' : cfg.panel === 'white' ? 'classic' : null;
-    if (t && t !== panelType) setPanelType(t);
-  }
-  if (typeof cfg.modules === 'number' && cfg.modules >= 1 && cfg.modules !== panelCount) setPanelCount(cfg.modules);
-}
-window.solvioSetConfig = solvioApply;
-window.addEventListener('message', (e) => {
-  const d = e.data;
-  if (d && d.type === 'solvio-config') solvioApply(d);
-});
-// tell the embedding page we're ready so it can push the current configuration
-try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'solvio-ready' }, '*'); } catch (_) {}
 
 // ---- portrait product snapshot of just the panel module (with cell grid) ----
 window.__panelSnap = (azDeg = -50, rollDeg = -15, dist = 4.4, focusY = 0, outW = 1000, outH = 1300) => {

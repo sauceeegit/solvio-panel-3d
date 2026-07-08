@@ -156,10 +156,22 @@ scene.background = studioBg;
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 pmrem.compileEquirectangularShader();
-new RGBELoader().load(
+// Try two HDRI sources — Polyhaven clear sunny sky, fallback to three.js example
+const HDRI_URLS = [
   'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kloofendal_48d_partly_cloudy_puresky_1k.hdr',
-  (hdr) => { scene.environment = pmrem.fromEquirectangular(hdr).texture; hdr.dispose(); }
-);
+  'https://threejs.org/examples/textures/equirectangular/venice_sunset_1k.hdr',
+];
+function tryLoadHDRI(urls) {
+  if (!urls.length) return;
+  new RGBELoader().load(urls[0], (hdr) => {
+    const env = pmrem.fromEquirectangular(hdr).texture;
+    scene.environment = env;
+    scene.background = env;
+    scene.backgroundBlurriness = 0.06;
+    hdr.dispose();
+  }, undefined, () => tryLoadHDRI(urls.slice(1)));
+}
+tryLoadHDRI(HDRI_URLS);
 
 // ---- camera ----
 const camera = new THREE.PerspectiveCamera(38, innerWidth/innerHeight, 0.01, 100);
@@ -200,7 +212,8 @@ const sunTex = new THREE.CanvasTexture(sunCv); sunTex.colorSpace = THREE.SRGBCol
 const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, transparent: true, depthWrite: false }));
 sunSprite.scale.set(3.0, 3.0, 1); sunSprite.position.copy(sunPos);
 const sunGroup = new THREE.Group(); sunGroup.add(sunLight, sunLight.target, sunSprite); scene.add(sunGroup);
-scene.background = skyBg;   // sun is always on
+// background set to HDRI when it loads; skyBg is the fallback until then
+scene.background = skyBg;
 
 // ---- ground shadow catcher ----
 const ground = new THREE.Mesh(

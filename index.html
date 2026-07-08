@@ -166,10 +166,23 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.07;
 controls.minDistance = 0.6;
 controls.maxDistance = 16;
-// Gentler, more gradual wheel/trackpad zoom (default 1.0 lurches on high-res
-// trackpads where one gesture fires many compounding wheel events).
-controls.zoomSpeed = 0.4;
 controls.target.set(0, 0.5, -0.05);
+
+// ---- smooth, device-independent zoom ----
+// three.js scales wheel zoom by |deltaY|, so a trackpad flick or hi-res mouse
+// sends a huge delta and the view lurches. Disable the built-in zoom and drive
+// it ourselves: clamp each wheel event to a small fixed step and ease the camera
+// toward a target distance, so zoom stays gradual on any input device.
+controls.enableZoom = false;
+let zoomTarget = camera.position.distanceTo(controls.target);
+let zooming = false;
+const syncZoom = () => { zoomTarget = camera.position.distanceTo(controls.target); zooming = false; };
+renderer.domElement.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const step = Math.max(-40, Math.min(40, e.deltaY)) * 0.0016;   // clamp magnitude → fixed-ish step
+  zoomTarget = THREE.MathUtils.clamp(zoomTarget * Math.exp(step), controls.minDistance, controls.maxDistance);
+  zooming = true;
+}, { passive: false });
 
 // ---- lighting ----
 const key = new THREE.DirectionalLight(0xffffff, 2.0);
@@ -799,6 +812,7 @@ function setView(azDeg, elDeg, dist) {
     new THREE.Spherical(dist, THREE.MathUtils.degToRad(90 - elDeg), THREE.MathUtils.degToRad(azDeg)));
   camera.position.copy(controls.target).add(off);
   controls.update();
+  syncZoom();
 }
 // distance needed to keep the whole array in frame
 function fitDistance() {
@@ -813,6 +827,7 @@ function fitDistance() {
 function dollyToFit() {
   const off = camera.position.clone().sub(controls.target), need = fitDistance();
   if (off.length() < need) { off.setLength(need); camera.position.copy(controls.target).add(off); controls.update(); }
+  syncZoom();
 }
 // frame the camera to suit the current scene
 function frameScene() {
@@ -1023,6 +1038,14 @@ function animate() {
   requestAnimationFrame(animate);
   if (spinning) current.assembly.rotation.y += 0.0035;
   controls.update();
+  if (zooming) {
+    const off = camera.position.clone().sub(controls.target);
+    const cur = off.length();
+    const diff = zoomTarget - cur;
+    if (Math.abs(diff) < 0.003) { off.setLength(zoomTarget); zooming = false; }
+    else off.setLength(cur + diff * 0.18);
+    camera.position.copy(controls.target).add(off);
+  }
   updateAngle();
   renderer.render(scene, camera);
 }

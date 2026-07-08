@@ -250,10 +250,13 @@ const glassMat = new THREE.MeshPhysicalMaterial({
   color: 0xffffff,
   metalness: 0.0,
   roughness: 0.16,
-  clearcoat: 0.92,
+  // Sun reflection / glare reduced ~50% (clearcoat, base specular and env
+  // reflection all halved) so the bright bloom on the glass is subtler.
+  clearcoat: 0.46,
   clearcoatRoughness: 0.07,
-  reflectivity: 0.58,
-  envMapIntensity: 0.82,
+  reflectivity: 0.29,
+  specularIntensity: 0.5,
+  envMapIntensity: 0.41,
 });
 const edgeMat = new THREE.MeshStandardMaterial({ color: 0xc2c3ca, metalness: 0.88, roughness: 0.20, envMapIntensity: 1.2 }); // silver edge to show panel thinness
 // backsheet on the panel rear — white for the classic type, dark for the all-black type

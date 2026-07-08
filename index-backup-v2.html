@@ -143,7 +143,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffe
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.95;
+renderer.toneMappingExposure = 1.12;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
@@ -168,7 +168,7 @@ controls.maxDistance = 16;
 controls.target.set(0, 0.5, -0.05);
 
 // ---- lighting ----
-const key = new THREE.DirectionalLight(0xffffff, 1.1);
+const key = new THREE.DirectionalLight(0xffffff, 2.0);
 key.position.set(2.2, 3.0, 2.6);
 key.castShadow = true;
 key.shadow.mapSize.set(4096, 4096);
@@ -178,13 +178,13 @@ key.shadow.camera.top = 3; key.shadow.camera.bottom = -3;
 key.shadow.bias = -0.0003;
 key.shadow.normalBias = 0.02;
 scene.add(key);
-scene.add(new THREE.DirectionalLight(0xdfe6ef, 0.25).translateX(-3).translateY(1).translateZ(-2));
-scene.add(new THREE.AmbientLight(0xffffff, 0.15));
+scene.add(new THREE.DirectionalLight(0xdfe6ef, 0.5).translateX(-3).translateY(1).translateZ(-2));
+scene.add(new THREE.AmbientLight(0xffffff, 0.20));
 
 // ---- fixed sun (always on): warm directional light + glow, aimed at the tilted panel face ----
 const skyBg = makeGradient('#cfe1f2', '#f4eee2');            // soft daytime sky (cool top -> warm base)
 const sunPos = new THREE.Vector3(-2.6, 6.0, 1.4);          // high + to the side, so reflection isn't a full mirror wash
-const sunLight = new THREE.DirectionalLight(0xfff1d4, 0.75); // gentle warm sunlight
+const sunLight = new THREE.DirectionalLight(0xfff1d4, 1.1); // gentle warm sunlight
 sunLight.position.copy(sunPos); sunLight.target.position.set(0, 0.45, 0.1);
 const sunCv = document.createElement('canvas'); sunCv.width = sunCv.height = 256;
 { const g = sunCv.getContext('2d'); const rg = g.createRadialGradient(128, 128, 0, 128, 128, 128);
@@ -232,9 +232,9 @@ const glassMat = new THREE.MeshPhysicalMaterial({
   map: cellTex,
   color: 0xffffff,
   metalness: 0.0,
-  roughness: 0.22,
-  clearcoat: 0.70,
-  clearcoatRoughness: 0.12,
+  roughness: 0.16,
+  clearcoat: 0.92,
+  clearcoatRoughness: 0.07,
   reflectivity: 0.58,
   envMapIntensity: 0.82,
 });

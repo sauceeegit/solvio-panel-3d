@@ -105,7 +105,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
 // ---- real-world dimensions (metres) ----
@@ -155,7 +155,11 @@ const studioBg = makeGradient('#e7e7e7', '#c4c6c9');          // neutral studio 
 scene.background = studioBg;
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.02).texture;
+pmrem.compileEquirectangularShader();
+new RGBELoader().load(
+  'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kloofendal_48d_partly_cloudy_puresky_1k.hdr',
+  (hdr) => { scene.environment = pmrem.fromEquirectangular(hdr).texture; hdr.dispose(); }
+);
 
 // ---- camera ----
 const camera = new THREE.PerspectiveCamera(38, innerWidth/innerHeight, 0.01, 100);
@@ -233,11 +237,11 @@ const glassMat = new THREE.MeshPhysicalMaterial({
   map: cellTex,
   color: 0xffffff,
   metalness: 0.0,
-  roughness: 0.16,
-  clearcoat: 0.92,
-  clearcoatRoughness: 0.07,
-  reflectivity: 0.58,
-  envMapIntensity: 0.82,
+  roughness: 0.14,
+  clearcoat: 0.95,
+  clearcoatRoughness: 0.06,
+  reflectivity: 0.65,
+  envMapIntensity: 1.2,
 });
 const edgeMat = new THREE.MeshStandardMaterial({ color: 0xc2c3ca, metalness: 0.88, roughness: 0.20, envMapIntensity: 1.2 }); // silver edge to show panel thinness
 // backsheet on the panel rear — white for the classic type, dark for the all-black type

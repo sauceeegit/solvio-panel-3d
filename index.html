@@ -105,7 +105,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
 // ---- real-world dimensions (metres) ----
@@ -155,20 +155,7 @@ const studioBg = makeGradient('#e7e7e7', '#c4c6c9');          // neutral studio 
 scene.background = studioBg;
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-pmrem.compileEquirectangularShader();
-// Load a bright sunny sky HDRI for reflections only (background stays as the gradient)
-const HDRI_URLS = [
-  'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/sunflowers_puresky_1k.hdr',
-  'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kloofendal_48d_partly_cloudy_puresky_1k.hdr',
-];
-function tryLoadHDRI(urls) {
-  if (!urls.length) return;
-  new RGBELoader().load(urls[0], (hdr) => {
-    scene.environment = pmrem.fromEquirectangular(hdr).texture;
-    hdr.dispose();
-  }, undefined, () => tryLoadHDRI(urls.slice(1)));
-}
-tryLoadHDRI(HDRI_URLS);
+scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.02).texture;
 
 // ---- camera ----
 const camera = new THREE.PerspectiveCamera(38, innerWidth/innerHeight, 0.01, 100);
@@ -209,8 +196,7 @@ const sunTex = new THREE.CanvasTexture(sunCv); sunTex.colorSpace = THREE.SRGBCol
 const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, transparent: true, depthWrite: false }));
 sunSprite.scale.set(3.0, 3.0, 1); sunSprite.position.copy(sunPos);
 const sunGroup = new THREE.Group(); sunGroup.add(sunLight, sunLight.target, sunSprite); scene.add(sunGroup);
-// background set to HDRI when it loads; skyBg is the fallback until then
-scene.background = skyBg;
+scene.background = skyBg;   // sun is always on
 
 // ---- ground shadow catcher ----
 const ground = new THREE.Mesh(
@@ -222,8 +208,8 @@ ground.position.y = 0;
 ground.receiveShadow = true;
 scene.add(ground);
 // garden lawn (Garden mode) + building (Rooftop mode)
-const gardenGroundMat = new THREE.MeshStandardMaterial({ color: 0x7a8c68, roughness: 0.97, metalness: 0.0 });
-const grassMat = new THREE.MeshStandardMaterial({ color: 0x5a7248, roughness: 1.0, metalness: 0.0 }); // grass tufts
+const gardenGroundMat = new THREE.MeshStandardMaterial({ color: 0x6f8f52, roughness: 0.95, metalness: 0.0 });
+const grassMat = new THREE.MeshStandardMaterial({ color: 0x4c7a30, roughness: 1.0, metalness: 0.0 }); // grass tufts
 const ROOF_HEIGHT = 3;    // rooftop building height (m)
 const brickMat   = new THREE.MeshStandardMaterial({ color: 0x9e3b31, roughness: 0.92, metalness: 0.0 }); // brick red walls
 const parapetMat = new THREE.MeshStandardMaterial({ color: 0xccc6b8, roughness: 0.90, metalness: 0.0 }); // concrete coping curb
@@ -247,11 +233,11 @@ const glassMat = new THREE.MeshPhysicalMaterial({
   map: cellTex,
   color: 0xffffff,
   metalness: 0.0,
-  roughness: 0.14,
-  clearcoat: 0.95,
-  clearcoatRoughness: 0.06,
-  reflectivity: 0.65,
-  envMapIntensity: 1.2,
+  roughness: 0.16,
+  clearcoat: 0.92,
+  clearcoatRoughness: 0.07,
+  reflectivity: 0.58,
+  envMapIntensity: 0.82,
 });
 const edgeMat = new THREE.MeshStandardMaterial({ color: 0xc2c3ca, metalness: 0.88, roughness: 0.20, envMapIntensity: 1.2 }); // silver edge to show panel thinness
 // backsheet on the panel rear — white for the classic type, dark for the all-black type

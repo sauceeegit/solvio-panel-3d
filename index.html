@@ -43,6 +43,7 @@
   #typeBtn { top: 232px; }
   #railBtn { top: 268px; }
   #modeBtn:disabled, #bldgBtn:disabled, #railBtn:disabled { opacity: .4; cursor: default; }
+  .btn-on { background: #1a1a1a !important; color: #fff !important; border-color: #1a1a1a !important; }
   #bctrl {
     position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 10;
     display: flex; gap: 20px; align-items: flex-end; user-select: none;
@@ -763,6 +764,7 @@ function setScene(mode) {
   sceneMode = mode;
   rebuildAll();
   sceneBtn.textContent = SCENE_LABEL[sceneMode];
+  sceneBtn.classList.toggle('btn-on', sceneMode !== 'balcony');
   const notBalcony = (sceneMode !== 'balcony');   // tilt/vertical, building & railing apply only on the balcony
   modeBtn.disabled = notBalcony; bldgBtn.disabled = notBalcony; railBtn.disabled = notBalcony;
   document.getElementById('balconyCtrls').style.display = notBalcony ? 'none' : 'flex';

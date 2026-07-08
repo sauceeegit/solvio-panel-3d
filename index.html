@@ -28,26 +28,21 @@
     color: #2b2b2b; font-weight: 600; font-size: 15px; letter-spacing: .3px;
   }
   #title span { display:block; color:#7a7a7a; font-weight:400; font-size:11px; margin-top:2px; }
-  #spin, #frameBtn, #labelBtn, #sceneBalcony, #sceneGarden, #sceneRooftop, #sceneFacade, #modeBtn, #bldgBtn, #typeBtn, #railBtn {
+  #spin, #frameBtn, #labelBtn, #sceneBtn, #modeBtn, #bldgBtn, #typeBtn, #railBtn {
     position: fixed; right: 16px; z-index: 10;
     font-size: 12px; color:#444; background: rgba(255,255,255,.6);
     border: 1px solid rgba(0,0,0,.08); border-radius: 8px; padding: 6px 10px; cursor: pointer;
     backdrop-filter: blur(6px); min-width: 116px; text-align: left;
-    transition: background 0.15s, color 0.15s;
   }
   #spin { top: 16px; }
   #frameBtn { top: 52px; }
   #labelBtn { top: 88px; }
-  #sceneBalcony { top: 124px; }
-  #sceneGarden  { top: 160px; }
-  #sceneRooftop { top: 196px; }
-  #sceneFacade  { top: 232px; }
-  #modeBtn  { top: 278px; }
-  #bldgBtn  { top: 314px; }
-  #typeBtn  { top: 350px; }
-  #railBtn  { top: 386px; }
+  #sceneBtn { top: 124px; }
+  #modeBtn { top: 160px; }
+  #bldgBtn { top: 196px; }
+  #typeBtn { top: 232px; }
+  #railBtn { top: 268px; }
   #modeBtn:disabled, #bldgBtn:disabled, #railBtn:disabled { opacity: .4; cursor: default; }
-  .scene-active { background: #1a1a1a !important; color: #fff !important; border-color: #1a1a1a !important; }
   #bctrl {
     position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 10;
     display: flex; gap: 20px; align-items: flex-end; user-select: none;
@@ -75,10 +70,7 @@
 <button id="spin">▶ Auto-rotate</button>
 <button id="frameBtn">☑ Frame</button>
 <button id="labelBtn">☐ Labels</button>
-<button id="sceneBalcony" class="scene-active">▤ Balcony</button>
-<button id="sceneGarden">⛰ Garden</button>
-<button id="sceneRooftop">▦ Rooftop</button>
-<button id="sceneFacade">▥ Facade</button>
+<button id="sceneBtn">▤ Balcony</button>
 <button id="modeBtn">◹ Tilted</button>
 <button id="bldgBtn">☑ Building</button>
 <button id="typeBtn">◧ All-black</button>
@@ -151,7 +143,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffe
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.95;
+renderer.toneMappingExposure = 1.12;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
@@ -176,7 +168,7 @@ controls.maxDistance = 16;
 controls.target.set(0, 0.5, -0.05);
 
 // ---- lighting ----
-const key = new THREE.DirectionalLight(0xffffff, 1.1);
+const key = new THREE.DirectionalLight(0xffffff, 2.0);
 key.position.set(2.2, 3.0, 2.6);
 key.castShadow = true;
 key.shadow.mapSize.set(4096, 4096);
@@ -186,13 +178,13 @@ key.shadow.camera.top = 3; key.shadow.camera.bottom = -3;
 key.shadow.bias = -0.0003;
 key.shadow.normalBias = 0.02;
 scene.add(key);
-scene.add(new THREE.DirectionalLight(0xdfe6ef, 0.25).translateX(-3).translateY(1).translateZ(-2));
-scene.add(new THREE.AmbientLight(0xffffff, 0.15));
+scene.add(new THREE.DirectionalLight(0xdfe6ef, 0.5).translateX(-3).translateY(1).translateZ(-2));
+scene.add(new THREE.AmbientLight(0xffffff, 0.20));
 
 // ---- fixed sun (always on): warm directional light + glow, aimed at the tilted panel face ----
 const skyBg = makeGradient('#cfe1f2', '#f4eee2');            // soft daytime sky (cool top -> warm base)
 const sunPos = new THREE.Vector3(-2.6, 6.0, 1.4);          // high + to the side, so reflection isn't a full mirror wash
-const sunLight = new THREE.DirectionalLight(0xfff1d4, 0.75); // gentle warm sunlight
+const sunLight = new THREE.DirectionalLight(0xfff1d4, 1.1); // gentle warm sunlight
 sunLight.position.copy(sunPos); sunLight.target.position.set(0, 0.45, 0.1);
 const sunCv = document.createElement('canvas'); sunCv.width = sunCv.height = 256;
 { const g = sunCv.getContext('2d'); const rg = g.createRadialGradient(128, 128, 0, 128, 128, 128);
@@ -215,8 +207,8 @@ ground.position.y = 0;
 ground.receiveShadow = true;
 scene.add(ground);
 // garden lawn (Garden mode) + building (Rooftop mode)
-const gardenGroundMat = new THREE.MeshStandardMaterial({ color: 0x5a8040, roughness: 0.97, metalness: 0.0 });
-const grassMat = new THREE.MeshStandardMaterial({ color: 0x3d6b28, roughness: 1.0, metalness: 0.0 });
+const gardenGroundMat = new THREE.MeshStandardMaterial({ color: 0x6f8f52, roughness: 0.95, metalness: 0.0 });
+const grassMat = new THREE.MeshStandardMaterial({ color: 0x4c7a30, roughness: 1.0, metalness: 0.0 }); // grass tufts
 const ROOF_HEIGHT = 3;    // rooftop building height (m)
 const brickMat   = new THREE.MeshStandardMaterial({ color: 0x9e3b31, roughness: 0.92, metalness: 0.0 }); // brick red walls
 const parapetMat = new THREE.MeshStandardMaterial({ color: 0xccc6b8, roughness: 0.90, metalness: 0.0 }); // concrete coping curb
@@ -240,9 +232,9 @@ const glassMat = new THREE.MeshPhysicalMaterial({
   map: cellTex,
   color: 0xffffff,
   metalness: 0.0,
-  roughness: 0.22,
-  clearcoat: 0.70,
-  clearcoatRoughness: 0.12,
+  roughness: 0.16,
+  clearcoat: 0.92,
+  clearcoatRoughness: 0.07,
   reflectivity: 0.58,
   envMapIntensity: 0.82,
 });
@@ -604,25 +596,25 @@ function buildFacadePanel() {
   return unit;
 }
 
-// flat grass border strip around the garden lawn (no cartoon spikes)
+// small grass tufts around the garden lawn edge
+const grassBladeGeo = new THREE.ConeGeometry(0.02, 0.17, 4);
 function buildGrassEdges(w, l) {
   const g = new THREE.Group(); g.name = 'gardenGrass';
-  const border = 0.6; // border width in metres
-  const borderMat = new THREE.MeshStandardMaterial({ color: 0x4a7a2e, roughness: 0.95, metalness: 0.0 });
-  // four border strips: front, back, left, right
-  const strips = [
-    { sx: w + border * 2, sz: border, ox: 0,           oz: -(l / 2 + border / 2) },
-    { sx: w + border * 2, sz: border, ox: 0,           oz:  (l / 2 + border / 2) },
-    { sx: border,         sz: l,      ox: -(w / 2 + border / 2), oz: 0 },
-    { sx: border,         sz: l,      ox:  (w / 2 + border / 2), oz: 0 },
-  ];
-  strips.forEach(({ sx, sz, ox, oz }) => {
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(sx, sz), borderMat);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(ox, 0.001, oz);
-    mesh.receiveShadow = true;
-    g.add(mesh);
-  });
+  const tuft = (x, z) => {
+    const t = new THREE.Group(); t.position.set(x, 0, z);
+    const n = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) {
+      const b = new THREE.Mesh(grassBladeGeo, grassMat);
+      b.position.set((Math.random() - 0.5) * 0.07, 0.08, (Math.random() - 0.5) * 0.07);
+      b.rotation.set((Math.random() - 0.5) * 0.5, Math.random() * Math.PI, (Math.random() - 0.5) * 0.5);
+      b.scale.y = 0.7 + Math.random() * 0.8;
+      t.add(b);
+    }
+    g.add(t);
+  };
+  const step = 0.4;
+  for (let x = -w / 2; x <= w / 2 + 1e-6; x += step) { tuft(x, -l / 2); tuft(x, l / 2); }
+  for (let z = -l / 2 + step; z < l / 2 - 1e-6; z += step) { tuft(-w / 2, z); tuft(w / 2, z); }
   return g;
 }
 // largest number of panels the current setting can hold
@@ -762,27 +754,23 @@ railBtn.onclick = () => {
   railBtn.textContent = (balconyType === 'baluster') ? '▥ Bar railing' : '▢ Glass railing';
 };
 
-// ---- scene buttons ----
+// ---- scene toggle: Balcony <-> Garden ----
+const sceneBtn = document.getElementById('sceneBtn');
 const modeBtn = document.getElementById('modeBtn');
-const sceneBtns = {
-  balcony: document.getElementById('sceneBalcony'),
-  garden:  document.getElementById('sceneGarden'),
-  rooftop: document.getElementById('sceneRooftop'),
-  facade:  document.getElementById('sceneFacade'),
-};
+const SCENE_ORDER = ['balcony', 'garden', 'rooftop', 'facade'];
+const SCENE_LABEL = { balcony: '▤ Balcony', garden: '⛰ Garden', rooftop: '▦ Rooftop', facade: '▥ Facade' };
 function setScene(mode) {
   sceneMode = mode;
   rebuildAll();
-  // highlight active scene button
-  Object.entries(sceneBtns).forEach(([k, btn]) => btn.classList.toggle('scene-active', k === mode));
-  const notBalcony = (sceneMode !== 'balcony');
+  sceneBtn.textContent = SCENE_LABEL[sceneMode];
+  const notBalcony = (sceneMode !== 'balcony');   // tilt/vertical, building & railing apply only on the balcony
   modeBtn.disabled = notBalcony; bldgBtn.disabled = notBalcony; railBtn.disabled = notBalcony;
   document.getElementById('balconyCtrls').style.display = notBalcony ? 'none' : 'flex';
   document.getElementById('gardenCtrls').style.display  = notBalcony ? 'flex' : 'none';
   const plotLbl = sceneMode === 'rooftop' ? 'Roof' : sceneMode === 'facade' ? 'Wall' : 'Garden';
   document.getElementById('gwLbl').textContent = plotLbl;
   document.getElementById('glLbl').textContent = plotLbl;
-  document.getElementById('glField').style.display = (sceneMode === 'facade') ? 'none' : 'flex';
+  document.getElementById('glField').style.display = (sceneMode === 'facade') ? 'none' : 'flex';   // facade: width only
   if (notBalcony) {
     gwSlider.value = plotW(); gwOut.textContent = plotW().toFixed(1);
     glSlider.value = plotL(); glOut.textContent = plotL().toFixed(1);
@@ -790,7 +778,7 @@ function setScene(mode) {
   frameScene();
   updatePcUI();
 }
-Object.entries(sceneBtns).forEach(([k, btn]) => btn.onclick = () => setScene(k));
+sceneBtn.onclick = () => setScene(SCENE_ORDER[(SCENE_ORDER.indexOf(sceneMode) + 1) % SCENE_ORDER.length]);
 
 // ---- orientation toggle (Balcony only): Tilted <-> Vertical ----
 modeBtn.onclick = () => {

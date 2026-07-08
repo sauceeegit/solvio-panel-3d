@@ -127,7 +127,7 @@ let panelType = 'black';    // 'black' (all-black mono) | 'classic' (blue cells,
 let balconyType = 'baluster'; // 'baluster' (metal bars) | 'glass' (frameless glass panel, top rail only)
 let panelCount = 1;           // number of panels laid along the balcony (default 1)
 const PANEL_GAP = 0.03;       // 3 cm horizontal gap (balcony row & garden columns)
-const GARDEN_ROW_GAP = 0.10;  // 10 cm depth gap between garden rows
+const GARDEN_ROW_GAP = 0.20;  // 20 cm depth gap between rows (garden & flat-roof/rooftop)
 const CELL_PALETTES = {
   black:   { base: '#040405', cellA: '#0c0d12', cellB: '#090a0e',
              finger: 'rgba(40,44,55,0.28)', bus: 'rgba(70,76,90,0.30)', cham: 'rgba(0,0,0,0.55)',
@@ -665,7 +665,7 @@ function buildAssembly(mode) {
     wall.receiveShadow = true; wall.name = 'facadeWall';
     assembly.add(wall);
   } else if (mode === 'garden' || mode === 'rooftop') {
-    // tile panels across the width (x, 3 cm gaps); when a row fills the width, wrap to a new row behind (z, 10 cm gaps)
+    // tile panels across the width (x, 3 cm gaps); when a row fills the width, wrap to a new row behind (z, 20 cm gaps)
     const onRoof = (mode === 'rooftop');
     const yLift = onRoof ? ROOF_HEIGHT : 0;          // rooftop lifts the array onto the building
     const dropY = base.position.y;                   // ground-drop from buildPanelUnit

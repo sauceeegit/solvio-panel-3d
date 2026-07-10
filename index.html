@@ -73,6 +73,16 @@
   body.embed #angle,
   body.embed #sceneBtn,
   body.embed #typeBtn { display: none !important; }
+  /* Embedded on MOBILE: keep only the dimension sliders (balcony length +
+     railing height) on a single row — drop the tilt/railing buttons and the
+     panel counter, and shrink the sliders so both fit side by side. */
+  @media (max-width: 1023px) {
+    body.embed #modeRow,
+    body.embed #panelsCtrl { display: none !important; }
+    body.embed #balconyCtrls,
+    body.embed #gardenCtrls { flex-wrap: nowrap; gap: 14px; }
+    body.embed #bctrl input[type=range] { width: 112px; }
+  }
 </style>
 </head>
 <body>
@@ -102,7 +112,7 @@
     <label id="glField"><span id="glLbl">Garden</span> length &nbsp;<b><span id="glOut">5.0</span> m</b>
       <input id="glSlider" type="range" min="2" max="15" step="0.1" value="5" autocomplete="off" /></label>
   </span>
-  <label>Panels &nbsp;<b><span id="pcOut">1</span></b>
+  <label id="panelsCtrl">Panels &nbsp;<b><span id="pcOut">1</span></b>
     <span class="pcrow"><button id="pcMinus" type="button">−</button><button id="pcPlus" type="button">+</button><small id="pcMsg"></small></span></label>
 </div>
 

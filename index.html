@@ -66,13 +66,13 @@
      a second line when it appears. */
   #bctrl #pcMsg { color: #e8392b; font-size: 12px; white-space: nowrap; min-width: 30px; }
   /* Embedded in the product configurator (?embed=1): the parent's React
-     configurator drives the model. On mobile/tablet the in-model control bar
-     overlapped the (short, clipped) canvas — hide the controls/overlays there
-     and let the canvas fill the whole frame. Desktop embed keeps the bar. */
-  @media (max-width: 1023px) {
-    body.embed #bctrl, body.embed #title, body.embed #angle { display: none !important; }
-    body.embed #app { inset: 0 !important; }
-  }
+     configurator drives the scene (Location) and panel type (Module), so hide
+     those toggles and the title/angle overlays. The bar stays visible with just
+     Tilted, railing type, the dimension sliders and the panel count. */
+  body.embed #title,
+  body.embed #angle,
+  body.embed #sceneBtn,
+  body.embed #typeBtn { display: none !important; }
 </style>
 </head>
 <body>

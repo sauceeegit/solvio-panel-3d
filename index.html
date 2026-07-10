@@ -201,6 +201,9 @@ app.appendChild(renderer.domElement);
 (function () {
   const hint = document.getElementById('draghint');
   if (!hint) return;
+  // Touch devices → "finger"; mouse (desktop) → "mouse".
+  const touch = window.matchMedia('(pointer: coarse)').matches;
+  hint.textContent = touch ? '✋ Drag with your finger' : '🖱 Drag with your mouse';
   const kill = () => {
     hint.classList.add('hide');
     setTimeout(() => hint.remove(), 600);

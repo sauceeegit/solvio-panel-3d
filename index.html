@@ -10,6 +10,20 @@
   /* The 3D canvas fills the viewport ABOVE the bottom control section; JS keeps
      the bottom offset in sync with the actual bar height (it wraps on mobile). */
   #app { position: fixed; left: 0; right: 0; top: 0; bottom: 96px; }
+  /* Half-transparent "drag" affordance over the model — fades out on first drag. */
+  #draghint {
+    position: absolute; left: 50%; bottom: 15%; transform: translateX(-50%);
+    z-index: 6; pointer-events: none; user-select: none; white-space: nowrap;
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 16px; border-radius: 999px;
+    background: rgba(20,22,24,.34); color: rgba(255,255,255,.92);
+    font-size: 13px; font-weight: 600; letter-spacing: .3px;
+    backdrop-filter: blur(4px);
+    opacity: .78; transition: opacity .5s ease;
+    animation: draghint-bob 2s ease-in-out infinite;
+  }
+  #draghint.hide { opacity: 0; }
+  @keyframes draghint-bob { 0%,100% { transform: translate(-50%,0) } 50% { transform: translate(-50%,-5px) } }
   #hud {
     position: fixed; left: 16px; bottom: 14px; z-index: 10;
     color: #5b5b5b; font-size: 12px; line-height: 1.5; letter-spacing: .2px;
@@ -86,7 +100,7 @@
 </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="app"><div id="draghint">✋ Drag with your finger</div></div>
 <div id="title">Solvio 3D model</div>
 <div id="angle">—</div>
 <button id="spin">▶ Auto-rotate</button>
@@ -182,6 +196,19 @@ renderer.toneMappingExposure = 1.12;
 renderer.shadowMap.enabled = false;   // shadows removed
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
+
+// Dismiss the "drag" hint on the first interaction (or after a few seconds).
+(function () {
+  const hint = document.getElementById('draghint');
+  if (!hint) return;
+  const kill = () => {
+    hint.classList.add('hide');
+    setTimeout(() => hint.remove(), 600);
+    app.removeEventListener('pointerdown', kill);
+  };
+  app.addEventListener('pointerdown', kill, { once: true });
+  setTimeout(kill, 6000);
+})();
 
 // ---- scene + grey studio backdrop ----
 const scene = new THREE.Scene();

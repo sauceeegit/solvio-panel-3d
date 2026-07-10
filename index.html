@@ -65,6 +65,14 @@
   /* Reserve a fixed slot for the "full" message so the +/- row never wraps to
      a second line when it appears. */
   #bctrl #pcMsg { color: #e8392b; font-size: 12px; white-space: nowrap; min-width: 30px; }
+  /* Embedded in the product configurator (?embed=1): the parent's React
+     configurator drives the model. On mobile/tablet the in-model control bar
+     overlapped the (short, clipped) canvas — hide the controls/overlays there
+     and let the canvas fill the whole frame. Desktop embed keeps the bar. */
+  @media (max-width: 1023px) {
+    body.embed #bctrl, body.embed #title, body.embed #angle { display: none !important; }
+    body.embed #app { inset: 0 !important; }
+  }
 </style>
 </head>
 <body>
@@ -111,6 +119,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// When embedded in the product page (?embed=1) the React configurator drives the
+// model, so hide the in-model UI (see body.embed CSS) for a clean, full-frame
+// canvas. Set before any layout is measured below.
+const EMBEDDED = new URLSearchParams(location.search).get('embed') === '1';
+if (EMBEDDED) document.body.classList.add('embed');
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
 // ---- real-world dimensions (metres) ----

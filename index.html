@@ -87,16 +87,35 @@
   body.embed #angle,
   body.embed #sceneBtn,
   body.embed #typeBtn { display: none !important; }
-  /* Embedded on MOBILE: keep only the dimension sliders (balcony length +
-     railing height) on a single row — drop the tilt/railing buttons and the
-     panel counter, and shrink the sliders so both fit side by side. */
+  /* Embedded on MOBILE: keep only the two dimension sliders on a single row —
+     drop the tilt/railing buttons; the panel counter is floated into the model
+     frame (see #app > #panelsCtrl + the JS that moves it). */
   @media (max-width: 1023px) {
-    body.embed #modeRow,
-    body.embed #panelsCtrl { display: none !important; }
+    body.embed #modeRow { display: none !important; }
     body.embed #balconyCtrls,
-    body.embed #gardenCtrls { flex-wrap: nowrap; gap: 14px; }
-    body.embed #bctrl input[type=range] { width: 112px; }
+    body.embed #gardenCtrls { flex-wrap: nowrap; gap: 12px; }
+    body.embed #bctrl label { white-space: nowrap; }
+    body.embed #bctrl input[type=range] { width: 104px; }
   }
+  /* Panel counter floated into the bottom-right of the model frame (mobile
+     embed). The JS moves #panelsCtrl into #app; these styles restyle it there
+     since it leaves the #bctrl label / .pcrow scope. */
+  #app > #panelsCtrl {
+    position: absolute; right: 10px; bottom: 10px; z-index: 6; margin: 0;
+    display: flex; flex-direction: row; align-items: center; gap: 8px;
+    padding: 5px 7px 5px 12px; border-radius: 999px; white-space: nowrap;
+    background: rgba(255,255,255,.86); backdrop-filter: blur(6px);
+    box-shadow: 0 2px 12px rgba(0,0,0,.16);
+    font-size: 12px; font-weight: 600; color: #333;
+  }
+  #app > #panelsCtrl b { color: #111; }
+  #app > #panelsCtrl #pcMsg { display: none; }
+  #app > #panelsCtrl .pcrow { display: flex; gap: 6px; align-items: center; }
+  #app > #panelsCtrl .pcrow button {
+    width: 28px; height: 28px; font-size: 17px; line-height: 1; color: #333;
+    border: 1px solid rgba(0,0,0,.16); border-radius: 8px; background: #fff; cursor: pointer;
+  }
+  #app > #panelsCtrl .pcrow button:disabled { opacity: .35; cursor: default; }
 </style>
 </head>
 <body>
@@ -196,6 +215,13 @@ renderer.toneMappingExposure = 1.12;
 renderer.shadowMap.enabled = false;   // shadows removed
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
+
+// On mobile embed, float the panel counter into the bottom-right of the model
+// frame (out of the bottom bar) so the bar holds just the two dimension sliders.
+if (EMBEDDED && matchMedia('(max-width: 1023px)').matches) {
+  const pc = document.getElementById('panelsCtrl');
+  if (pc) { app.appendChild(pc); syncBarOffset(); }
+}
 
 // Dismiss the "drag" hint on the first interaction (or after a few seconds).
 (function () {

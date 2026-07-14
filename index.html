@@ -162,6 +162,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
 // When embedded in the product page (?embed=1) the React configurator drives the
 // model, so hide the in-model UI (see body.embed CSS) for a clean, full-frame
@@ -247,7 +248,16 @@ scene.background = studioBg;
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 pmrem.compileEquirectangularShader();
-{ const et = makeOutdoorEnvMap(); scene.environment = pmrem.fromEquirectangular(et).texture; et.dispose(); }
+// Load real outdoor HDRI (Polyhaven — free, CORS-enabled). Falls back to procedural sky if it fails.
+new RGBELoader().load(
+  'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kloofendal_48d_partly_cloudy_1k.hdr',
+  (hdr) => {
+    scene.environment = pmrem.fromEquirectangular(hdr).texture;
+    hdr.dispose();
+  },
+  undefined,
+  () => { const et = makeOutdoorEnvMap(); scene.environment = pmrem.fromEquirectangular(et).texture; et.dispose(); }
+);
 
 // ---- camera ----
 const camera = new THREE.PerspectiveCamera(38, app.clientWidth/app.clientHeight, 0.01, 100);
@@ -347,11 +357,11 @@ const glassMat = new THREE.MeshPhysicalMaterial({
   roughness: 0.16,
   // Sun reflection / glare reduced ~50% (clearcoat, base specular and env
   // reflection all halved) so the bright bloom on the glass is subtler.
-  clearcoat: 0.85,
-  clearcoatRoughness: 0.06,
-  reflectivity: 0.55,
-  specularIntensity: 0.9,
-  envMapIntensity: 1.1,
+  clearcoat: 0.90,
+  clearcoatRoughness: 0.05,
+  reflectivity: 0.65,
+  specularIntensity: 1.0,
+  envMapIntensity: 1.4,
 });
 const edgeMat = new THREE.MeshStandardMaterial({ color: 0xc2c3ca, metalness: 0.88, roughness: 0.20, envMapIntensity: 1.2 }); // silver edge to show panel thinness
 // backsheet on the panel rear — white for the classic type, dark for the all-black type

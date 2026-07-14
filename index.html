@@ -161,8 +161,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { Sky } from 'three/addons/objects/Sky.js';
 
 // When embedded in the product page (?embed=1) the React configurator drives the
 // model, so hide the in-model UI (see body.embed CSS) for a clean, full-frame
@@ -241,23 +240,11 @@ if (EMBEDDED && matchMedia('(max-width: 1023px)').matches) {
   setTimeout(kill, 6000);
 })();
 
-// ---- scene + grey studio backdrop ----
+// ---- scene ----
 const scene = new THREE.Scene();
-const studioBg = makeGradient('#e7e7e7', '#c4c6c9');          // neutral studio backdrop
-scene.background = studioBg;
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-pmrem.compileEquirectangularShader();
-// Load real outdoor HDRI (Polyhaven — free, CORS-enabled). Falls back to procedural sky if it fails.
-new RGBELoader().load(
-  'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kloofendal_48d_partly_cloudy_1k.hdr',
-  (hdr) => {
-    scene.environment = pmrem.fromEquirectangular(hdr).texture;
-    hdr.dispose();
-  },
-  undefined,
-  () => { const et = makeOutdoorEnvMap(); scene.environment = pmrem.fromEquirectangular(et).texture; et.dispose(); }
-);
+pmrem.compileCubemapShader();
 
 // ---- camera ----
 const camera = new THREE.PerspectiveCamera(38, app.clientWidth/app.clientHeight, 0.01, 100);
@@ -286,38 +273,39 @@ renderer.domElement.addEventListener('wheel', (e) => {
   zooming = true;
 }, { passive: false });
 
-// ---- lighting ----
-const key = new THREE.DirectionalLight(0xffffff, 2.0);
-key.position.set(2.2, 3.0, 2.6);
-key.castShadow = true;
-key.shadow.mapSize.set(4096, 4096);
-key.shadow.camera.near = 0.5; key.shadow.camera.far = 12;
-key.shadow.camera.left = -3; key.shadow.camera.right = 3;
-key.shadow.camera.top = 3; key.shadow.camera.bottom = -3;
-key.shadow.bias = -0.0003;
-key.shadow.normalBias = 0.02;
-scene.add(key);
-scene.add(new THREE.DirectionalLight(0xdfe6ef, 0.25).translateX(-3).translateY(1).translateZ(-2));
-scene.add(new THREE.HemisphereLight(0x9ec8e8, 0x6a8a4a, 0.28));  // reduced fill → more contrast
+// ---- physically-based sky (Rayleigh + Mie scattering) ----
+const sky = new Sky();
+sky.scale.setScalar(10000);
+scene.add(sky);
+const skyU = sky.material.uniforms;
+skyU['turbidity'].value    = 6;      // slight haze
+skyU['rayleigh'].value     = 1.2;    // blue-sky scattering
+skyU['mieCoefficient'].value     = 0.007;
+skyU['mieDirectionalG'].value    = 0.82;
+const SUN_DIR = new THREE.Vector3();
+// Sun at ~38° elevation, 200° azimuth — matches key light angle
+SUN_DIR.setFromSphericalCoords(1, THREE.MathUtils.degToRad(52), THREE.MathUtils.degToRad(200));
+skyU['sunPosition'].value.copy(SUN_DIR);
 
-// ---- fixed sun (always on): warm directional light + glow, aimed at the tilted panel face ----
-const skyBg = makeGradient(null, null, [                     // rich multi-stop daytime sky
-  [0, '#4a8fc2'], [0.28, '#89bbd8'], [0.55, '#c8dded'], [0.78, '#e8dfc5'], [1, '#f2e8d0']
-]);
-const sunPos = new THREE.Vector3(-2.6, 6.0, 1.4);          // high + to the side, so reflection isn't a full mirror wash
-const sunLight = new THREE.DirectionalLight(0xfff4d8, 2.2); // strong warm sun for dramatic shadows
-sunLight.position.copy(sunPos); sunLight.target.position.set(0, 0.45, 0.1);
-const sunCv = document.createElement('canvas'); sunCv.width = sunCv.height = 256;
-{ const g = sunCv.getContext('2d'); const rg = g.createRadialGradient(128, 128, 0, 128, 128, 128);
-  rg.addColorStop(0, 'rgba(255,251,238,1)'); rg.addColorStop(0.14, 'rgba(255,243,212,0.92)');
-  rg.addColorStop(0.42, 'rgba(255,209,138,0.32)'); rg.addColorStop(1, 'rgba(255,200,120,0)');
-  g.fillStyle = rg; g.fillRect(0, 0, 256, 256); }
-const sunTex = new THREE.CanvasTexture(sunCv); sunTex.colorSpace = THREE.SRGBColorSpace;
-const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, transparent: true, depthWrite: false }));
-sunSprite.scale.set(3.0, 3.0, 1); sunSprite.position.copy(sunPos);
-const sunGroup = new THREE.Group(); sunGroup.add(sunLight, sunLight.target, sunSprite); scene.add(sunGroup);
-scene.background = skyBg;   // sun is always on
-scene.fog = new THREE.FogExp2(0xc8dded, 0.016);    // subtle exponential distance haze for depth
+// Generate env map FROM the sky so reflections match the background exactly
+const skyScene = new THREE.Scene(); skyScene.add(sky);
+scene.environment = pmrem.fromScene(skyScene, 0.04, 0.01, 2000).texture;
+scene.add(sky); // move back after baking
+scene.fog = new THREE.FogExp2(0xc8dced, 0.014);
+
+// Sun directional light matching the sky's sun position
+const sunLight = new THREE.DirectionalLight(0xfff4d8, 2.4);
+sunLight.position.set(SUN_DIR.x * 10, SUN_DIR.y * 10, SUN_DIR.z * 10);
+sunLight.target.position.set(0, 0.3, 0);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+sunLight.shadow.camera.near = 0.5; sunLight.shadow.camera.far = 20;
+sunLight.shadow.camera.left = -5; sunLight.shadow.camera.right = 5;
+sunLight.shadow.camera.top = 5; sunLight.shadow.camera.bottom = -5;
+sunLight.shadow.bias = -0.0003; sunLight.shadow.normalBias = 0.02;
+scene.add(sunLight); scene.add(sunLight.target);
+// Sky bounce: warm sky top, green-brown ground bounce
+scene.add(new THREE.HemisphereLight(0x9ec8f0, 0x6b7c3e, 0.35));
 
 // ---- ground shadow catcher ----
 const ground = new THREE.Mesh(

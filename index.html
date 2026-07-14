@@ -211,8 +211,8 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffe
 renderer.setSize(app.clientWidth, app.clientHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.12;
-renderer.shadowMap.enabled = false;   // shadows removed
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
@@ -245,7 +245,8 @@ const studioBg = makeGradient('#e7e7e7', '#c4c6c9');          // neutral studio 
 scene.background = studioBg;
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.02).texture;
+pmrem.compileEquirectangularShader();
+{ const et = makeOutdoorEnvMap(); scene.environment = pmrem.fromEquirectangular(et).texture; et.dispose(); }
 
 // ---- camera ----
 const camera = new THREE.PerspectiveCamera(38, app.clientWidth/app.clientHeight, 0.01, 100);
@@ -345,11 +346,11 @@ const glassMat = new THREE.MeshPhysicalMaterial({
   roughness: 0.16,
   // Sun reflection / glare reduced ~50% (clearcoat, base specular and env
   // reflection all halved) so the bright bloom on the glass is subtler.
-  clearcoat: 0.46,
-  clearcoatRoughness: 0.07,
-  reflectivity: 0.29,
-  specularIntensity: 0.5,
-  envMapIntensity: 0.41,
+  clearcoat: 0.85,
+  clearcoatRoughness: 0.06,
+  reflectivity: 0.55,
+  specularIntensity: 0.9,
+  envMapIntensity: 1.1,
 });
 const edgeMat = new THREE.MeshStandardMaterial({ color: 0xc2c3ca, metalness: 0.88, roughness: 0.20, envMapIntensity: 1.2 }); // silver edge to show panel thinness
 // backsheet on the panel rear — white for the classic type, dark for the all-black type
@@ -466,8 +467,8 @@ function buildBalcony(parent, railY, railZ) {
   const rail     = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, metalness: 0.9,  roughness: 0.35, envMapIntensity: 1.0 });
   const railD    = new THREE.MeshStandardMaterial({ color: 0x7c828a, metalness: 0.85, roughness: 0.45 });
   const concrete = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeConcreteMap(), metalness: 0.0, roughness: 0.95 });
-  const wallMat  = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeStuccoMap(), metalness: 0.0, roughness: 0.90, transparent: true, opacity: 0.5 });
-  const wallMatSolid = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeStuccoMap(), metalness: 0.0, roughness: 0.90 });
+  const wallMat  = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeStuccoMap(), metalness: 0.0, roughness: 0.88 });
+  const wallMatSolid = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeStuccoMap(), metalness: 0.0, roughness: 0.88 });
 
   const tube = (len, r, mat) => {
     const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 20), mat);
@@ -1187,34 +1188,68 @@ function makeGradient(top, bottom, stops) {
   return t;
 }
 
+function makeOutdoorEnvMap() {
+  // Equirectangular (2:1) outdoor sky texture for PMREM
+  const w = 1024, h = 512;
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  // Sky top → horizon → ground
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0,    '#2b6ea6');
+  grad.addColorStop(0.38, '#6aade0');
+  grad.addColorStop(0.50, '#c2daf0');
+  grad.addColorStop(0.52, '#8aaa65');
+  grad.addColorStop(0.75, '#6b8a4e');
+  grad.addColorStop(1,    '#4a6035');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+  // Sun glow (upper quarter, left of center)
+  const sx = w * 0.28, sy = h * 0.30;
+  const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, 80);
+  sg.addColorStop(0,   'rgba(255,252,220,1)');
+  sg.addColorStop(0.15,'rgba(255,240,180,0.85)');
+  sg.addColorStop(0.45,'rgba(255,220,140,0.30)');
+  sg.addColorStop(1,   'rgba(255,200,100,0)');
+  ctx.fillStyle = sg; ctx.fillRect(0, 0, w, h);
+  // Horizon brightness band
+  const hg = ctx.createLinearGradient(0, h * 0.44, 0, h * 0.56);
+  hg.addColorStop(0, 'rgba(255,255,255,0)');
+  hg.addColorStop(0.5,'rgba(220,235,248,0.55)');
+  hg.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = hg; ctx.fillRect(0, 0, w, h);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  return t;
+}
+
 function makeGrassMap() {
   const sz = 512;
   const cv = document.createElement('canvas'); cv.width = cv.height = sz;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#6f8f52'; ctx.fillRect(0, 0, sz, sz);
-  // varied green patches for natural lawn look
-  for (let i = 0; i < 700; i++) {
+  ctx.fillStyle = '#5a7c3c'; ctx.fillRect(0, 0, sz, sz);
+  // large tonal patches — real lawns have colour variation
+  for (let i = 0; i < 900; i++) {
     const x = Math.random() * sz, y = Math.random() * sz;
-    const r = Math.random() * 22 + 4;
-    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(110,155,55,0.30)' : 'rgba(38,68,18,0.22)';
+    const r = Math.random() * 28 + 5;
+    ctx.fillStyle = Math.random() > 0.5 ? `rgba(100,150,45,${0.25+Math.random()*0.30})` : `rgba(28,55,12,${0.18+Math.random()*0.25})`;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
-  // subtle blade streaks
-  ctx.strokeStyle = 'rgba(70,108,32,0.12)'; ctx.lineWidth = 1;
-  for (let i = 0; i < 300; i++) {
+  // fine blade streaks
+  ctx.strokeStyle = 'rgba(55,90,25,0.25)'; ctx.lineWidth = 1;
+  for (let i = 0; i < 500; i++) {
     const x = Math.random() * sz, y = Math.random() * sz;
-    const len = Math.random() * 14 + 2;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (Math.random()-0.5)*4, y - len); ctx.stroke();
+    const len = Math.random() * 18 + 3;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (Math.random()-0.5)*5, y - len); ctx.stroke();
   }
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(6, 6);
+  t.repeat.set(8, 8);
   return t;
 }
 
 function makeBrickMap() {
-  const sz = 512, bCols = 6, bRows = 10;
+  const sz = 512, bCols = 5, bRows = 9;
   const cv = document.createElement('canvas'); cv.width = sz; cv.height = sz;
   const ctx = cv.getContext('2d');
   // mortar background
@@ -1253,25 +1288,40 @@ function makeConcreteMap(light = false) {
   const sz = 512;
   const cv = document.createElement('canvas'); cv.width = cv.height = sz;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = light ? '#cbc6bc' : '#c8c3ba'; ctx.fillRect(0, 0, sz, sz);
-  // aggregate speckle
-  for (let i = 0; i < 3500; i++) {
+  const base = light ? '#c8c2b5' : '#c0bab0';
+  ctx.fillStyle = base; ctx.fillRect(0, 0, sz, sz);
+  // large coarse aggregate variation
+  for (let i = 0; i < 220; i++) {
     const x = Math.random() * sz, y = Math.random() * sz;
-    const r = Math.random() * 2.2 + 0.4;
-    ctx.fillStyle = Math.random() > 0.48 ? 'rgba(255,255,255,0.055)' : 'rgba(0,0,0,0.065)';
+    const r = Math.random() * 7 + 2;
+    const v = Math.random();
+    ctx.fillStyle = v > 0.6 ? `rgba(255,255,240,${0.10+Math.random()*0.15})` : `rgba(0,0,0,${0.08+Math.random()*0.14})`;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
-  // faint form/joint lines
-  ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 1.2;
+  // fine grain speckle
+  for (let i = 0; i < 4000; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.11)';
+    ctx.fillRect(x, y, Math.random() * 2 + 0.5, Math.random() * 2 + 0.5);
+  }
+  // visible expansion/form-tie joints
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 2;
   for (let i = 1; i < 4; i++) {
     const p = i / 4 * sz;
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, sz); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(sz, p); ctx.stroke();
+  }
+  // slightly lighter highlight along joint edges
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const p = i / 4 * sz + 2;
     ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, sz); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(sz, p); ctx.stroke();
   }
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(3, 2);
+  t.repeat.set(4, 3);
   return t;
 }
 
@@ -1279,25 +1329,25 @@ function makeStuccoMap() {
   const sz = 512;
   const cv = document.createElement('canvas'); cv.width = cv.height = sz;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#a89f7a'; ctx.fillRect(0, 0, sz, sz);
-  // rough plaster noise — fine specks
-  for (let i = 0; i < 6000; i++) {
+  ctx.fillStyle = '#a09570'; ctx.fillRect(0, 0, sz, sz);
+  // base mid-scale plaster lumps — most visible feature
+  for (let i = 0; i < 160; i++) {
     const x = Math.random() * sz, y = Math.random() * sz;
-    const r = Math.random() * 2.8 + 0.3;
-    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,200,0.045)' : 'rgba(0,0,0,0.055)';
+    const r = Math.random() * 14 + 3;
+    ctx.fillStyle = Math.random() > 0.5 ? `rgba(200,188,148,${0.18+Math.random()*0.20})` : `rgba(60,50,28,${0.12+Math.random()*0.18})`;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
-  // larger plaster clumps
-  for (let i = 0; i < 120; i++) {
+  // fine grit speckle on top
+  for (let i = 0; i < 7000; i++) {
     const x = Math.random() * sz, y = Math.random() * sz;
-    const r = Math.random() * 8 + 2;
-    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(180,165,120,0.08)' : 'rgba(90,80,55,0.07)';
+    const r = Math.random() * 2 + 0.3;
+    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(220,208,165,0.15)' : 'rgba(30,22,8,0.13)';
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(4, 3);
+  t.repeat.set(5, 4);
   return t;
 }
 

@@ -286,10 +286,12 @@ key.shadow.bias = -0.0003;
 key.shadow.normalBias = 0.02;
 scene.add(key);
 scene.add(new THREE.DirectionalLight(0xdfe6ef, 0.5).translateX(-3).translateY(1).translateZ(-2));
-scene.add(new THREE.AmbientLight(0xffffff, 0.20));
+scene.add(new THREE.HemisphereLight(0xb0cfe8, 0x8aaa6a, 0.40));  // sky-blue from above, earth-green bounce from below
 
 // ---- fixed sun (always on): warm directional light + glow, aimed at the tilted panel face ----
-const skyBg = makeGradient('#cfe1f2', '#f4eee2');            // soft daytime sky (cool top -> warm base)
+const skyBg = makeGradient(null, null, [                     // rich multi-stop daytime sky
+  [0, '#4a8fc2'], [0.28, '#89bbd8'], [0.55, '#c8dded'], [0.78, '#e8dfc5'], [1, '#f2e8d0']
+]);
 const sunPos = new THREE.Vector3(-2.6, 6.0, 1.4);          // high + to the side, so reflection isn't a full mirror wash
 const sunLight = new THREE.DirectionalLight(0xfff1d4, 1.1); // gentle warm sunlight
 sunLight.position.copy(sunPos); sunLight.target.position.set(0, 0.45, 0.1);
@@ -303,6 +305,7 @@ const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, trans
 sunSprite.scale.set(3.0, 3.0, 1); sunSprite.position.copy(sunPos);
 const sunGroup = new THREE.Group(); sunGroup.add(sunLight, sunLight.target, sunSprite); scene.add(sunGroup);
 scene.background = skyBg;   // sun is always on
+scene.fog = new THREE.FogExp2(0xc8dded, 0.016);    // subtle exponential distance haze for depth
 
 // ---- ground shadow catcher ----
 const ground = new THREE.Mesh(
@@ -314,11 +317,11 @@ ground.position.y = 0;
 ground.receiveShadow = true;
 scene.add(ground);
 // garden lawn (Garden mode) + building (Rooftop mode)
-const gardenGroundMat = new THREE.MeshStandardMaterial({ color: 0x6f8f52, roughness: 0.95, metalness: 0.0 });
+const gardenGroundMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeGrassMap(), roughness: 0.95, metalness: 0.0 });
 const grassMat = new THREE.MeshStandardMaterial({ color: 0x4c7a30, roughness: 1.0, metalness: 0.0 }); // grass tufts
 const ROOF_HEIGHT = 3;    // rooftop building height (m)
-const brickMat   = new THREE.MeshStandardMaterial({ color: 0x9e3b31, roughness: 0.92, metalness: 0.0 }); // brick red walls
-const parapetMat = new THREE.MeshStandardMaterial({ color: 0xccc6b8, roughness: 0.90, metalness: 0.0 }); // concrete coping curb
+const brickMat   = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeBrickMap(), roughness: 0.88, metalness: 0.0 }); // brick walls
+const parapetMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeConcreteMap(true), roughness: 0.88, metalness: 0.0 }); // concrete coping
 const windowMat  = new THREE.MeshStandardMaterial({ color: 0x223243, roughness: 0.15, metalness: 0.40, side: THREE.DoubleSide }); // glass
 const FACADE_WALL_H = 4.5;   // facade wall height (m)
 const facadeWallMat = new THREE.MeshStandardMaterial({ color: 0x7ba0c4, roughness: 0.9, metalness: 0.0 }); // darker blue wall
@@ -462,9 +465,9 @@ function buildBalcony(parent, railY, railZ) {
 
   const rail     = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, metalness: 0.9,  roughness: 0.35, envMapIntensity: 1.0 });
   const railD    = new THREE.MeshStandardMaterial({ color: 0x7c828a, metalness: 0.85, roughness: 0.45 });
-  const concrete = new THREE.MeshStandardMaterial({ color: 0xcdc8be, metalness: 0.0,  roughness: 0.95 });
-  const wallMat  = new THREE.MeshStandardMaterial({ color: 0xa89f7a, metalness: 0.0,  roughness: 0.9, transparent: true, opacity: 0.5 }); // yellowish gray building, 50% transparent (above slab)
-  const wallMatSolid = new THREE.MeshStandardMaterial({ color: 0xa89f7a, metalness: 0.0, roughness: 0.9 });                                 // opaque below the slab top
+  const concrete = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeConcreteMap(), metalness: 0.0, roughness: 0.95 });
+  const wallMat  = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeStuccoMap(), metalness: 0.0, roughness: 0.90, transparent: true, opacity: 0.5 });
+  const wallMatSolid = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeStuccoMap(), metalness: 0.0, roughness: 0.90 });
 
   const tube = (len, r, mat) => {
     const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 20), mat);
@@ -1171,16 +1174,130 @@ function roundedRectShape(w, h, r) {
   return s;
 }
 
-function makeGradient(top, bottom) {
+function makeGradient(top, bottom, stops) {
   const c = document.createElement('canvas');
   c.width = 4; c.height = 512;
   const g = c.getContext('2d');
   const grad = g.createLinearGradient(0, 0, 0, 512);
-  grad.addColorStop(0, top);
-  grad.addColorStop(1, bottom);
+  if (stops) { stops.forEach(([pos, col]) => grad.addColorStop(pos, col)); }
+  else { grad.addColorStop(0, top); grad.addColorStop(1, bottom); }
   g.fillStyle = grad; g.fillRect(0, 0, 4, 512);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function makeGrassMap() {
+  const sz = 512;
+  const cv = document.createElement('canvas'); cv.width = cv.height = sz;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#6f8f52'; ctx.fillRect(0, 0, sz, sz);
+  // varied green patches for natural lawn look
+  for (let i = 0; i < 700; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    const r = Math.random() * 22 + 4;
+    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(110,155,55,0.30)' : 'rgba(38,68,18,0.22)';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // subtle blade streaks
+  ctx.strokeStyle = 'rgba(70,108,32,0.12)'; ctx.lineWidth = 1;
+  for (let i = 0; i < 300; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    const len = Math.random() * 14 + 2;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (Math.random()-0.5)*4, y - len); ctx.stroke();
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(6, 6);
+  return t;
+}
+
+function makeBrickMap() {
+  const sz = 512, bCols = 6, bRows = 10;
+  const cv = document.createElement('canvas'); cv.width = sz; cv.height = sz;
+  const ctx = cv.getContext('2d');
+  // mortar background
+  ctx.fillStyle = '#b2a898'; ctx.fillRect(0, 0, sz, sz);
+  const bW = sz / bCols, bH = sz / bRows;
+  const mH = bH * 0.10, mV = bW * 0.055;
+  for (let r = 0; r < bRows; r++) {
+    const ox = (r % 2) * bW * 0.5;
+    for (let c = -1; c < bCols + 1; c++) {
+      const x = c * bW + ox + mV * 0.5;
+      const y = r * bH + mH * 0.5;
+      const w = bW - mV, h = bH - mH;
+      // per-brick color variation using deterministic noise
+      const v = (Math.sin(r * 5.1 + c * 8.7) * 0.5 + Math.sin(r * 2.3 + c * 3.1) * 0.25 + 0.5);
+      const dr = Math.floor(v * 28) - 14;
+      ctx.fillStyle = `rgb(${158+dr},${59+Math.floor(dr*0.5)},${49+Math.floor(dr*0.4)})`;
+      ctx.fillRect(Math.max(0, x), y, Math.min(w, sz - Math.max(0, x)), h);
+      // subtle top-edge highlight (like ambient occlusion on mortar shadow)
+      ctx.fillStyle = 'rgba(255,255,255,0.07)';
+      ctx.fillRect(Math.max(0, x), y, Math.min(w, sz - Math.max(0, x)), h * 0.18);
+      // fine surface grain
+      for (let i = 0; i < 18; i++) {
+        ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.06})`;
+        ctx.fillRect(Math.max(0, x) + Math.random() * w, y + Math.random() * h, Math.random() * 4 + 1, Math.random() * 3 + 1);
+      }
+    }
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(5, 6);
+  return t;
+}
+
+function makeConcreteMap(light = false) {
+  const sz = 512;
+  const cv = document.createElement('canvas'); cv.width = cv.height = sz;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = light ? '#cbc6bc' : '#c8c3ba'; ctx.fillRect(0, 0, sz, sz);
+  // aggregate speckle
+  for (let i = 0; i < 3500; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    const r = Math.random() * 2.2 + 0.4;
+    ctx.fillStyle = Math.random() > 0.48 ? 'rgba(255,255,255,0.055)' : 'rgba(0,0,0,0.065)';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // faint form/joint lines
+  ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 1.2;
+  for (let i = 1; i < 4; i++) {
+    const p = i / 4 * sz;
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, sz); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(sz, p); ctx.stroke();
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(3, 2);
+  return t;
+}
+
+function makeStuccoMap() {
+  const sz = 512;
+  const cv = document.createElement('canvas'); cv.width = cv.height = sz;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#a89f7a'; ctx.fillRect(0, 0, sz, sz);
+  // rough plaster noise — fine specks
+  for (let i = 0; i < 6000; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    const r = Math.random() * 2.8 + 0.3;
+    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,200,0.045)' : 'rgba(0,0,0,0.055)';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // larger plaster clumps
+  for (let i = 0; i < 120; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    const r = Math.random() * 8 + 2;
+    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(180,165,120,0.08)' : 'rgba(90,80,55,0.07)';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(4, 3);
   return t;
 }
 

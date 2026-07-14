@@ -278,10 +278,10 @@ const sky = new Sky();
 sky.scale.setScalar(10000);
 scene.add(sky);
 const skyU = sky.material.uniforms;
-skyU['turbidity'].value    = 6;      // slight haze
-skyU['rayleigh'].value     = 1.2;    // blue-sky scattering
-skyU['mieCoefficient'].value     = 0.007;
-skyU['mieDirectionalG'].value    = 0.82;
+skyU['turbidity'].value    = 3;      // cleaner tropical sky
+skyU['rayleigh'].value     = 1.0;    // vivid blue
+skyU['mieCoefficient'].value     = 0.004;
+skyU['mieDirectionalG'].value    = 0.85;
 const SUN_DIR = new THREE.Vector3();
 // Sun at ~38° elevation, 200° azimuth — matches key light angle
 SUN_DIR.setFromSphericalCoords(1, THREE.MathUtils.degToRad(52), THREE.MathUtils.degToRad(200));
@@ -295,7 +295,7 @@ sky.material.fog = false;  // sky is at scale 10000 — don't fog it out
 scene.fog = new THREE.Fog(0xd4e8f5, 18, 60);  // gentle linear haze for depth, far enough to not touch the sky
 
 // Sun directional light matching the sky's sun position
-const sunLight = new THREE.DirectionalLight(0xfff4d8, 2.4);
+const sunLight = new THREE.DirectionalLight(0xfffae8, 2.8); // warm tropical sun
 sunLight.position.set(SUN_DIR.x * 10, SUN_DIR.y * 10, SUN_DIR.z * 10);
 sunLight.target.position.set(0, 0.3, 0);
 sunLight.castShadow = true;
@@ -354,15 +354,15 @@ const glassMat = new THREE.MeshPhysicalMaterial({
   iridescenceIOR: 1.5,
   iridescenceThicknessRange: [150, 400],
 });
-const edgeMat = new THREE.MeshStandardMaterial({ color: 0xc2c3ca, metalness: 0.88, roughness: 0.20, envMapIntensity: 1.2 }); // silver edge to show panel thinness
+const edgeMat = new THREE.MeshStandardMaterial({ color: 0x141516, metalness: 0.85, roughness: 0.25, envMapIntensity: 1.1 }); // black anodized aluminum frame
 // backsheet on the panel rear — white for the classic type, dark for the all-black type
 const backMat = new THREE.MeshStandardMaterial({ color: 0x0e0e10, roughness: 0.72, metalness: 0.0, side: THREE.DoubleSide });
 function setBacksheetColor() { backMat.color.set(panelType === 'classic' ? 0xeef0f3 : 0x0e0e10); }
 setBacksheetColor();
 
 // =================== shared frame materials + helpers (used by every build) ===================
-const metal     = new THREE.MeshStandardMaterial({ color: 0xb8bdc4, metalness: 0.95, roughness: 0.24, envMapIntensity: 1.4 });
-const metalDark = new THREE.MeshStandardMaterial({ color: 0x848b94, metalness: 0.90, roughness: 0.34, envMapIntensity: 1.1 });
+const metal     = new THREE.MeshStandardMaterial({ color: 0x1a1c1e, metalness: 0.85, roughness: 0.30, envMapIntensity: 1.2 }); // matte black anodized
+const metalDark = new THREE.MeshStandardMaterial({ color: 0x111214, metalness: 0.80, roughness: 0.40, envMapIntensity: 1.0 });
 
 function makeBeam(p1, p2, bw, bh, mat) {            // rectangular box-section strut between two points
   const dir = new THREE.Vector3().subVectors(p2, p1);
@@ -466,8 +466,8 @@ function buildBalcony(parent, railY, railZ) {
   const floorY = railCY - railingHeight;               // drop the floor to set the railing height
   const lowY = floorY + 0.10;                          // lower rail just above the floor
 
-  const rail     = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, metalness: 0.9,  roughness: 0.35, envMapIntensity: 1.0 });
-  const railD    = new THREE.MeshStandardMaterial({ color: 0x7c828a, metalness: 0.85, roughness: 0.45 });
+  const rail     = new THREE.MeshStandardMaterial({ color: 0x1c1d1e, metalness: 0.85, roughness: 0.30, envMapIntensity: 1.0 }); // black powder-coated iron
+  const railD    = new THREE.MeshStandardMaterial({ color: 0x111213, metalness: 0.80, roughness: 0.40 });
   const concrete = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeConcreteMap(), metalness: 0.0, roughness: 0.95 });
   const wallMat  = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeStuccoMap(), metalness: 0.0, roughness: 0.88 });
   const wallMatSolid = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeStuccoMap(), metalness: 0.0, roughness: 0.88 });
@@ -1332,7 +1332,7 @@ function makeStuccoMap() {
   const cv = document.createElement('canvas'); cv.width = cv.height = sz;
   const ctx = cv.getContext('2d');
   // warm cream/sand plaster — typical Mediterranean exterior wall
-  ctx.fillStyle = '#d8cdb2'; ctx.fillRect(0, 0, sz, sz);
+  ctx.fillStyle = '#e8e0d0'; ctx.fillRect(0, 0, sz, sz); // warm cream — like the building in image 2
   // very fine plaster grain — tiny specks only, no big blobs
   for (let i = 0; i < 8000; i++) {
     const x = Math.random() * sz, y = Math.random() * sz;

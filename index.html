@@ -166,7 +166,6 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 
 // When embedded in the product page (?embed=1) the React configurator drives the
 // model, so hide the in-model UI (see body.embed CSS) for a clean, full-frame
@@ -221,16 +220,10 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
-// ---- post-processing composer (bloom + SSAO) ----
+// ---- post-processing composer (bloom) ----
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const ssaoPass = new SSAOPass(scene, camera, app.clientWidth, app.clientHeight);
-ssaoPass.kernelRadius = 12;
-ssaoPass.minDistance = 0.003;
-ssaoPass.maxDistance = 0.25;
-ssaoPass.output = SSAOPass.OUTPUT.Default;
-composer.addPass(ssaoPass);
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(app.clientWidth, app.clientHeight), 0.28, 0.5, 0.80);
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(app.clientWidth, app.clientHeight), 0.32, 0.5, 0.78);
 composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
 

@@ -1329,25 +1329,26 @@ function makeStuccoMap() {
   const sz = 512;
   const cv = document.createElement('canvas'); cv.width = cv.height = sz;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#a09570'; ctx.fillRect(0, 0, sz, sz);
-  // base mid-scale plaster lumps — most visible feature
-  for (let i = 0; i < 160; i++) {
+  // warm cream/sand plaster — typical Mediterranean exterior wall
+  ctx.fillStyle = '#d8cdb2'; ctx.fillRect(0, 0, sz, sz);
+  // very fine plaster grain — tiny specks only, no big blobs
+  for (let i = 0; i < 8000; i++) {
     const x = Math.random() * sz, y = Math.random() * sz;
-    const r = Math.random() * 14 + 3;
-    ctx.fillStyle = Math.random() > 0.5 ? `rgba(200,188,148,${0.18+Math.random()*0.20})` : `rgba(60,50,28,${0.12+Math.random()*0.18})`;
+    const r = Math.random() * 1.6 + 0.3;
+    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,248,228,0.12)' : 'rgba(100,85,55,0.09)';
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
-  // fine grit speckle on top
-  for (let i = 0; i < 7000; i++) {
+  // small pebble inclusions — subtle, max 4px
+  for (let i = 0; i < 250; i++) {
     const x = Math.random() * sz, y = Math.random() * sz;
-    const r = Math.random() * 2 + 0.3;
-    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(220,208,165,0.15)' : 'rgba(30,22,8,0.13)';
+    const r = Math.random() * 3 + 0.8;
+    ctx.fillStyle = Math.random() > 0.5 ? `rgba(210,195,160,${0.10+Math.random()*0.12})` : `rgba(80,65,40,${0.07+Math.random()*0.10})`;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(5, 4);
+  t.repeat.set(4, 3);
   return t;
 }
 

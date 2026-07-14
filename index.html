@@ -162,10 +162,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 // When embedded in the product page (?embed=1) the React configurator drives the
 // model, so hide the in-model UI (see body.embed CSS) for a clean, full-frame
@@ -220,12 +216,6 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
-// ---- post-processing composer (bloom) ----
-const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
-const bloomPass = new UnrealBloomPass(new THREE.Vector2(app.clientWidth, app.clientHeight), 0.32, 0.5, 0.78);
-composer.addPass(bloomPass);
-composer.addPass(new OutputPass());
 
 // On mobile embed, float the panel counter into the bottom-right of the model
 // frame (out of the bottom bar) so the bar holds just the two dimension sliders.
@@ -1139,7 +1129,7 @@ window.__backShot = (azDeg = 210, elDeg = 12, dist = 2.9, outW = 1300, outH = 10
   return url;
 };
 
-window.__render = () => composer.render();   // force a redraw (for off-screen capture)
+window.__render = () => renderer.render(scene, camera);   // force a redraw (for off-screen capture)
 
 // ---- loop ----
 function animate() {
@@ -1155,7 +1145,7 @@ function animate() {
     camera.position.copy(controls.target).add(off);
   }
   updateAngle();
-  composer.render();
+  renderer.render(scene, camera);
 }
 animate();
 
@@ -1164,7 +1154,6 @@ const onResize = () => {
   camera.aspect = app.clientWidth/app.clientHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(app.clientWidth, app.clientHeight);
-  composer.setSize(app.clientWidth, app.clientHeight);
 };
 addEventListener('resize', onResize);
 // The bar height also changes when its contents wrap (e.g. scene switch swaps

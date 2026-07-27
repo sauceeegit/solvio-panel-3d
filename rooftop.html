@@ -197,7 +197,18 @@ const BORDER = 0.014; // black laminate border (no cells)
 let balconyLen = 3 * H;    // handrail run along x (m)
 let railingHeight = 0.95;  // floor-to-top-rail height (m); depth fixed at 1.2 m
 let gardenWidth = 5, gardenLength = 5;   // garden plot (m): panels tile across width (x), wrap to rows in depth (z)
-let roofWidth = 7, roofLength = 7;       // rooftop building footprint (m)
+let roofWidth = 7, roofLength = 7;       // rooftop bounding box (m) — the outline is scaled to fit
+// Roof footprint as a closed polygon in normalised plan coordinates (0..1):
+// u runs west->east, v runs south->north. A north-up image (Google Maps, most site
+// plans) maps straight in — see solvioSetRoof().
+// Default is the supplied L-shaped plan. That drawing has its north arrow pointing
+// DOWN the page, so read as a view from above it is rotated 180 deg: the page's
+// down = north and the page's right = west. Its cut-out corner is therefore the
+// NORTH-WEST one, and the points below are the drawing turned the right way up.
+let roofOutline = [
+  [1, 0], [0, 0], [0, 0.509], [0.397, 0.509], [0.397, 1], [1, 1]
+];
+const ROOF_SETBACK = 0.30;               // keep panels this far in from the roof edge (m)
 let facadeWidth = 6;                     // facade wall width (m); wall height fixed at 3 m
 const FIXED_RAILY = 0.945, FIXED_RAILZ = -0.367; // balcony stays here in both modes; panel+mount shift to hook onto it
 let buildingVisible = true; // wall + floor slab (the "building"); toggled by the Building button
@@ -703,63 +714,158 @@ function gardenGrid() {
   return { perRow, rows };
 }
 
+// North marker laid on the ground beside the building, so the plan orientation
+// (and therefore which way the panels face) is readable in the model.
+function buildNorthMarker(l) {
+  const sz = 256;
+  const cv = document.createElement('canvas'); cv.width = cv.height = sz;
+  const c = cv.getContext('2d');
+  c.clearRect(0, 0, sz, sz);
+  c.fillStyle = '#33383d';
+  c.beginPath(); c.moveTo(128, 24); c.lineTo(170, 120); c.lineTo(128, 100); c.lineTo(86, 120); c.closePath(); c.fill();
+  c.font = 'bold 84px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText('N', 128, 186);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3),
+    new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false }));
+  m.name = 'northMarker';
+  m.rotation.x = -Math.PI / 2;          // lie flat
+  m.rotation.z = Math.PI;               // texture "up" now points to -z (north)
+  m.position.set(0, 0.02, -(l / 2 + 1.4));
+  return m;
+}
+
+// =================== roof footprint (arbitrary polygon) ===================
+// The normalised outline is scaled into the roofWidth x roofLength box and centred.
+// Plan v maps to -z, so the north arrow on the plan points to -z in the model; the
+// panels are raised on their -z edge, which therefore makes them face south.
+function outlineWorld(w, l) {
+  return roofOutline.map(([u, v]) => ({ x: (u - 0.5) * w, z: (0.5 - v) * l }));
+}
+// Shape for extrusion: built as (x, -z) so a -90 deg X rotation stands it up with z intact.
+function polyShape(pts) {
+  const s = new THREE.Shape();
+  s.moveTo(pts[0].x, -pts[0].z);
+  for (let i = 1; i < pts.length; i++) s.lineTo(pts[i].x, -pts[i].z);
+  s.closePath();
+  return s;
+}
+function pointInPoly(pts, x, z) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i], b = pts[j];
+    if ((a.z > z) !== (b.z > z) && x < (b.x - a.x) * (z - a.z) / (b.z - a.z) + a.x) inside = !inside;
+  }
+  return inside;
+}
+function segCross(p1, p2, p3, p4) {                      // do segments p1p2 and p3p4 intersect?
+  const d = (a, b, c) => (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x);
+  const d1 = d(p3, p4, p1), d2 = d(p3, p4, p2), d3 = d(p1, p2, p3), d4 = d(p1, p2, p4);
+  return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+}
+// Is an axis-aligned rectangle wholly inside the polygon?
+function rectFits(pts, cx, cz, hw, hl) {
+  const c = [{ x: cx - hw, z: cz - hl }, { x: cx + hw, z: cz - hl },
+             { x: cx + hw, z: cz + hl }, { x: cx - hw, z: cz + hl }];
+  for (const p of c) if (!pointInPoly(pts, p.x, p.z)) return false;
+  for (let i = 0; i < 4; i++)                            // and no edge of the roof cuts through it
+    for (let j = 0, k = pts.length - 1; j < pts.length; k = j++)
+      if (segCross(c[i], c[(i + 1) % 4], pts[k], pts[j])) return false;
+  return true;
+}
+// z ranges covered by the polygon on the vertical line at x (handles notches / U shapes)
+function zSpansAt(pts, x) {
+  const hits = [];
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[j], b = pts[i];
+    if ((a.x <= x && b.x > x) || (b.x <= x && a.x > x))
+      hits.push(a.z + (x - a.x) / (b.x - a.x) * (b.z - a.z));
+  }
+  hits.sort((p, q) => p - q);
+  const spans = [];
+  for (let i = 0; i + 1 < hits.length; i += 2) spans.push([hits[i], hits[i + 1]]);
+  return spans;
+}
+
+// One band of trapezoidal sheet, profile drawn over 0..len (len <= one rib pitch)
+function sheetBandShape(len) {
+  const yPan = DECK_T - SHEET_RIB_H, yTop = DECK_T;
+  const panFlat = SHEET_PITCH - SHEET_CROWN - 2 * SHEET_SLOPE;   // 230 mm flat between ribs
+  const pts = []; let x = 0; pts.push([0, yPan]);
+  const step = (dx, y0, y1) => {
+    const xEnd = Math.min(x + dx, len);
+    pts.push([xEnd, y0 + (y1 - y0) * ((xEnd - x) / dx)]);
+    x = xEnd;
+  };
+  while (x < len - 1e-6) {
+    step(panFlat, yPan, yPan);     if (x >= len - 1e-6) break;
+    step(SHEET_SLOPE, yPan, yTop); if (x >= len - 1e-6) break;
+    step(SHEET_CROWN, yTop, yTop); if (x >= len - 1e-6) break;
+    step(SHEET_SLOPE, yTop, yPan);
+  }
+  const s = new THREE.Shape();
+  s.moveTo(0, 0); s.lineTo(len, 0);                      // solid underside
+  for (let i = pts.length - 1; i >= 0; i--) s.lineTo(pts[i][0], pts[i][1]);
+  s.closePath();
+  return s;
+}
+
 // Roof deck the panels sit on. Either a concrete slab or a trapezoidal metal sheet
 // (700 mm cover = 2 x 350 mm ribs, 60 mm deep). Either way its top lands on
 // ROOF_HEIGHT — for the sheet that means the rib CROWNS, which is what the rails bear on.
-function buildRoofDeck(w, l) {
+function buildRoofDeck(w, l, pts) {
   if (roofMaterial === 'concrete') {
     // one tile = one screed bay, so bays stay ~2.5 m whatever the roof size
     concreteRoofMap.repeat.set(Math.max(1, Math.round(w / 2.5)), Math.max(1, Math.round(l / 2.5)));
     concreteRoofMap.needsUpdate = true;
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(w, DECK_T, l), concreteMat);
-    slab.position.y = ROOF_HEIGHT - DECK_T / 2;
+    const dg = new THREE.ExtrudeGeometry(polyShape(pts), { depth: DECK_T, bevelEnabled: false });
+    const slab = new THREE.Mesh(dg, concreteMat);
+    slab.rotation.x = -Math.PI / 2; slab.position.y = ROOF_HEIGHT - DECK_T;
     slab.receiveShadow = true; slab.name = 'roofDeck';
     return slab;
   }
-  const yPan = DECK_T - SHEET_RIB_H, yTop = DECK_T;      // valley and crown heights
-  const panFlat = SHEET_PITCH - SHEET_CROWN - 2 * SHEET_SLOPE;   // 230 mm flat between ribs
-  const pts = [];
-  let x = 0; pts.push([0, yPan]);
-  const step = (dx, y0, y1) => {                          // walk the profile, clamped at the roof edge
-    const xEnd = Math.min(x + dx, w);
-    pts.push([xEnd, y0 + (y1 - y0) * ((xEnd - x) / dx)]);
-    x = xEnd;
-  };
-  while (x < w - 1e-6) {
-    step(panFlat, yPan, yPan);     if (x >= w - 1e-6) break;
-    step(SHEET_SLOPE, yPan, yTop); if (x >= w - 1e-6) break;
-    step(SHEET_CROWN, yTop, yTop); if (x >= w - 1e-6) break;
-    step(SHEET_SLOPE, yTop, yPan);
+  // sheets laid in bands one rib pitch wide, each cut to the roof outline
+  const g = new THREE.Group(); g.name = 'roofDeck';
+  const xs = pts.map(p => p.x), minX = Math.min(...xs), maxX = Math.max(...xs);
+  for (let x0 = minX; x0 < maxX - 1e-6; x0 += SHEET_PITCH) {
+    const bandLen = Math.min(SHEET_PITCH, maxX - x0);
+    for (const [z0, z1] of zSpansAt(pts, x0 + bandLen / 2)) {
+      if (z1 - z0 < 1e-3) continue;
+      const dg = new THREE.ExtrudeGeometry(sheetBandShape(bandLen), { depth: z1 - z0, bevelEnabled: false });
+      dg.translate(x0, ROOF_HEIGHT - DECK_T, z0);
+      const m = new THREE.Mesh(dg, metalRoofMat);
+      m.receiveShadow = true; g.add(m);
+    }
   }
-  const s = new THREE.Shape();
-  s.moveTo(0, 0); s.lineTo(w, 0);                         // solid underside
-  for (let i = pts.length - 1; i >= 0; i--) s.lineTo(pts[i][0], pts[i][1]);
-  s.closePath();
-  const dg = new THREE.ExtrudeGeometry(s, { depth: l, bevelEnabled: false });   // ribs run along z
-  dg.translate(-w / 2, ROOF_HEIGHT - DECK_T, -l / 2);
-  const m = new THREE.Mesh(dg, metalRoofMat);
-  m.receiveShadow = true; m.name = 'roofDeck';
-  return m;
+  return g;
 }
 
-// rooftop building: brick-red walls + windows, open roof edge (no parapet)
+// rooftop building: brick-red walls following the roof outline + windows, open roof edge
 function buildRoofBuilding(cx, cz, w, l) {
   const g = new THREE.Group(); g.name = 'roofBuilding'; g.position.set(cx, 0, cz);
+  const pts = outlineWorld(w, l);
   const bodyH = ROOF_HEIGHT - DECK_T;                     // deck makes up the rest
-  const body = new THREE.Mesh(new THREE.BoxGeometry(w, bodyH, l), brickMat);
-  body.position.y = bodyH / 2; body.receiveShadow = true; g.add(body);
-  g.add(buildRoofDeck(w, l));
-  // windows: a row on each wall
+  const wallGeo = new THREE.ExtrudeGeometry(polyShape(pts), { depth: bodyH, bevelEnabled: false });
+  const body = new THREE.Mesh(wallGeo, brickMat);
+  body.rotation.x = -Math.PI / 2; body.receiveShadow = true; g.add(body);
+  g.add(buildRoofDeck(w, l, pts));
+  // windows spaced along every wall, facing out
   const winW = 1.1, winH = 1.4, wy = 1.5, off = 0.03;
-  const place = (len) => { const n = Math.max(1, Math.floor(len / 2.4)); const span = len - winW - 0.8;
-    return Array.from({ length: n }, (_, i) => n === 1 ? 0 : -span / 2 + i * span / (n - 1)); };
-  for (const s of [1, -1]) for (const x of place(w)) {   // front (+z) / back (-z)
-    const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), windowMat);
-    win.position.set(x, wy, s * (l / 2 + off)); if (s < 0) win.rotation.y = Math.PI; g.add(win);
-  }
-  for (const s of [1, -1]) for (const z of place(l)) {   // right (+x) / left (-x)
-    const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), windowMat);
-    win.position.set(s * (w / 2 + off), wy, z); win.rotation.y = s * Math.PI / 2; g.add(win);
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[j], b = pts[i];
+    const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
+    if (len < winW + 0.8) continue;
+    let nx = dz / len, nz = -dx / len;                    // pick the outward-facing normal
+    const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+    if (pointInPoly(pts, mx + nx * 0.05, mz + nz * 0.05)) { nx = -nx; nz = -nz; }
+    const n = Math.max(1, Math.floor(len / 2.4)), span = len - winW - 0.8;
+    for (let k = 0; k < n; k++) {
+      const t = 0.5 + (n === 1 ? 0 : (-span / 2 + k * span / (n - 1)) / len);
+      const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), windowMat);
+      win.position.set(a.x + dx * t + nx * off, wy, a.z + dz * t + nz * off);
+      win.rotation.y = Math.atan2(nx, nz);
+      g.add(win);
+    }
   }
   return g;
 }
@@ -872,9 +978,27 @@ function buildGrassEdges(w, l) {
   for (let z = -l / 2 + step; z < l / 2 - 1e-6; z += step) { tuft(-w / 2, z); tuft(w / 2, z); }
   return g;
 }
+// Grid slots whose whole panel footprint (plus edge setback) sits inside the roof
+// outline — this is what makes an L-shaped or traced roof lay out correctly.
+function roofSlots() {
+  const w = plotW(), l = plotL(), pts = outlineWorld(w, l);
+  const hw = GARDEN_SPAN_X / 2 + ROOF_SETBACK, hl = GARDEN_SPAN_Z / 2 + ROOF_SETBACK;
+  const stepX = GARDEN_SPAN_X + IN_ROW_GAP, stepZ = GARDEN_SPAN_Z + ROW_GAP;
+  const nx = Math.max(1, Math.floor((w + IN_ROW_GAP) / stepX));
+  const nz = Math.max(1, Math.floor((l + ROW_GAP) / stepZ));
+  const x0 = -(nx - 1) * stepX / 2, z0 = -(nz - 1) * stepZ / 2;
+  const slots = [];
+  for (let r = 0; r < nz; r++) for (let c = 0; c < nx; c++) {
+    const x = x0 + c * stepX, z = z0 + r * stepZ;
+    if (rectFits(pts, x, z, hw, hl)) slots.push({ x, z });
+  }
+  return slots;
+}
+
 // largest number of panels the current setting can hold
 function maxPanels() {
   if (sceneMode === 'facade') return facadePerRow();
+  if (sceneMode === 'rooftop') return Math.max(1, roofSlots().length);
   if (sceneMode !== 'balcony') { const g = gardenGrid(); return g.perRow * g.rows; }
   return Math.max(1, Math.floor((balconyLen + PANEL_GAP) / (H + PANEL_GAP)));
 }
@@ -908,6 +1032,19 @@ function buildAssembly(mode) {
     const onRoof = (mode === 'rooftop');
     const yLift = onRoof ? ROOF_HEIGHT : 0;          // rooftop lifts the array onto the building
     const dropY = base.position.y;                   // unit origin sits on the surface
+    if (onRoof) {
+      // slots are already clipped to the roof outline and share its centre
+      const slots = roofSlots();
+      for (let i = 0; i < N; i++) {
+        const s = slots[i] || { x: 0, z: 0 };
+        const u = (i === 0) ? base : base.clone(true);
+        u.position.set(s.x, dropY + yLift, s.z);
+        assembly.add(u);
+      }
+      assembly.add(buildRoofBuilding(0, 0, plotW(), plotL()));
+      assembly.add(buildNorthMarker(plotL()));
+      return { assembly };
+    }
     const { perRow } = gardenGrid();
     const rowsUsed = Math.ceil(N / perRow);
     const stepX = GARDEN_SPAN_X + IN_ROW_GAP, stepZ = GARDEN_SPAN_Z + ROW_GAP;
@@ -926,9 +1063,7 @@ function buildAssembly(mode) {
     }
     const fb = new THREE.Box3().setFromObject(assembly);
     const cx = (fb.min.x + fb.max.x) / 2, cz = (fb.min.z + fb.max.z) / 2;
-    if (onRoof) {
-      assembly.add(buildRoofBuilding(cx, cz, plotW(), plotL()));   // brick building, panels on the roof
-    } else {
+    {
       // lawn sized to the garden plot, centred on the array
       const gg = new THREE.Mesh(new THREE.PlaneGeometry(plotW(), plotL()), gardenGroundMat);
       gg.rotation.x = -Math.PI / 2; gg.receiveShadow = true; gg.name = 'gardenGround';
@@ -1082,6 +1217,29 @@ function frameScene() {
 }
 // open framed on the balcony
 frameScene();
+
+// ---- roof outline API ----------------------------------------------------
+// Drive the roof from a traced plan / satellite view. Pass the outline as an array
+// of [u, v] points in 0..1, going round the roof in order, where u runs west->east
+// and v runs south->north (v = 1 is whichever way the plan's north arrow points).
+// Pixel coordinates off an image work directly — pass imageHeight and they are
+// normalised and v-flipped for you. Optionally give the real-world size in metres.
+//   solvioSetRoof({ outline: [[0,0],[1,0],[1,.5],[.6,.5],[.6,1],[0,1]] })
+//   solvioSetRoof({ outline: [[12,340],[430,340],...], imageWidth: 432, imageHeight: 383,
+//                   width: 18, length: 16 })
+window.solvioSetRoof = (opts = {}) => {
+  const { outline, imageWidth, imageHeight, width, length } = opts;
+  if (Array.isArray(outline) && outline.length >= 3) {
+    roofOutline = imageWidth && imageHeight
+      ? outline.map(([px, py]) => [px / imageWidth, 1 - py / imageHeight])   // image y grows downward
+      : outline.map(([u, v]) => [u, v]);
+  }
+  if (typeof width  === 'number' && width  > 0) { roofWidth  = width;  gwSlider.value = width;  gwOut.textContent = width.toFixed(1); }
+  if (typeof length === 'number' && length > 0) { roofLength = length; glSlider.value = length; glOut.textContent = length.toFixed(1); }
+  if (panelCount > maxPanels()) panelCount = maxPanels();
+  rebuildAll(); updatePcUI(); frameScene();
+  return { outline: roofOutline, width: roofWidth, length: roofLength, slots: maxPanels() };
+};
 
 // isolated reference render of just the panel + mount (used as a style reference for AI compositing)
 window.__refShot = (azDeg = 35, elDeg = 12, dist = 2.4, W = 1200, H = 820) => {

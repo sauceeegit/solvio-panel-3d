@@ -62,7 +62,7 @@
     backdrop-filter: blur(6px);
   }
   #zoomCtrl button:active { background: #ececec; }
-  #sceneBtn, #modeBtn, #typeBtn, #railBtn, #frameBtn, #labelBtn, #tiltBtn {
+  #sceneBtn, #modeBtn, #typeBtn, #railBtn, #frameBtn, #labelBtn, #tiltBtn, #roofMatBtn {
     font-size: 14px; color:#444; background: #fff;
     border: 1px solid rgba(0,0,0,.14); border-radius: 9px; padding: 9px 15px; cursor: pointer;
     text-align: left; white-space: nowrap;
@@ -142,6 +142,7 @@
     <button id="sceneBtn">▤ Balcony</button>
     <button id="typeBtn">◧ All-black</button>
     <button id="tiltBtn">▭ Flat</button>
+    <button id="roofMatBtn">▨ Concrete roof</button>
     <button id="frameBtn">☑ Frame</button>
     <button id="labelBtn">☑ Labels</button>
     <button id="modeBtn">◹ Tilted</button>
@@ -208,6 +209,10 @@ const GARDEN_ROW_GAP = 0.10;  // 10 cm gap where panels meet along their LONG si
 const RAIL_EXT = 0.06;        // rails run past each panel end so they stay visible in that gap
 let panelTilted = false;      // flat, or tilted up on two columns along one long edge
 const TILT_DEG = 15;          // tilt angle when raised
+let roofMaterial = 'concrete';   // 'concrete' | 'metal' — roof deck the panels sit on
+// trapezoidal metal sheet, per the supplied profile: 700 mm cover = 2 x 350 mm ribs, 60 mm deep
+const SHEET_PITCH = 0.35, SHEET_RIB_H = 0.06, SHEET_CROWN = 0.05, SHEET_SLOPE = 0.035;
+const DECK_T = 0.10;          // overall deck build-up; its top sits at ROOF_HEIGHT
 const CELL_PALETTES = {
   black:   { base: '#040405', cellA: '#0c0d12', cellB: '#090a0e',
              finger: 'rgba(40,44,55,0.28)', bus: 'rgba(70,76,90,0.30)', cham: 'rgba(0,0,0,0.55)',
@@ -342,6 +347,8 @@ const ROOF_HEIGHT = 3;    // rooftop building height (m)
 const brickMat   = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeBrickMap(), roughness: 0.88, metalness: 0.0 }); // brick walls
 const parapetMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeConcreteMap(true), roughness: 0.88, metalness: 0.0 }); // concrete coping
 const windowMat  = new THREE.MeshStandardMaterial({ color: 0x223243, roughness: 0.15, metalness: 0.40, side: THREE.DoubleSide }); // glass
+const concreteMat  = new THREE.MeshStandardMaterial({ color: 0xb9b7b1, roughness: 0.95, metalness: 0.0 });  // concrete roof deck
+const metalRoofMat = new THREE.MeshStandardMaterial({ color: 0x9aa2aa, roughness: 0.34, metalness: 0.78 }); // trapezoidal metal sheet
 const FACADE_WALL_H = 4.5;   // facade wall height (m)
 const facadeWallMat = new THREE.MeshStandardMaterial({ color: 0x7ba0c4, roughness: 0.9, metalness: 0.0 }); // darker blue wall
 
@@ -694,11 +701,49 @@ function gardenGrid() {
   return { perRow, rows };
 }
 
+// Roof deck the panels sit on. Either a concrete slab or a trapezoidal metal sheet
+// (700 mm cover = 2 x 350 mm ribs, 60 mm deep). Either way its top lands on
+// ROOF_HEIGHT — for the sheet that means the rib CROWNS, which is what the rails bear on.
+function buildRoofDeck(w, l) {
+  if (roofMaterial === 'concrete') {
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(w, DECK_T, l), concreteMat);
+    slab.position.y = ROOF_HEIGHT - DECK_T / 2;
+    slab.receiveShadow = true; slab.name = 'roofDeck';
+    return slab;
+  }
+  const yPan = DECK_T - SHEET_RIB_H, yTop = DECK_T;      // valley and crown heights
+  const panFlat = SHEET_PITCH - SHEET_CROWN - 2 * SHEET_SLOPE;   // 230 mm flat between ribs
+  const pts = [];
+  let x = 0; pts.push([0, yPan]);
+  const step = (dx, y0, y1) => {                          // walk the profile, clamped at the roof edge
+    const xEnd = Math.min(x + dx, w);
+    pts.push([xEnd, y0 + (y1 - y0) * ((xEnd - x) / dx)]);
+    x = xEnd;
+  };
+  while (x < w - 1e-6) {
+    step(panFlat, yPan, yPan);     if (x >= w - 1e-6) break;
+    step(SHEET_SLOPE, yPan, yTop); if (x >= w - 1e-6) break;
+    step(SHEET_CROWN, yTop, yTop); if (x >= w - 1e-6) break;
+    step(SHEET_SLOPE, yTop, yPan);
+  }
+  const s = new THREE.Shape();
+  s.moveTo(0, 0); s.lineTo(w, 0);                         // solid underside
+  for (let i = pts.length - 1; i >= 0; i--) s.lineTo(pts[i][0], pts[i][1]);
+  s.closePath();
+  const dg = new THREE.ExtrudeGeometry(s, { depth: l, bevelEnabled: false });   // ribs run along z
+  dg.translate(-w / 2, ROOF_HEIGHT - DECK_T, -l / 2);
+  const m = new THREE.Mesh(dg, metalRoofMat);
+  m.receiveShadow = true; m.name = 'roofDeck';
+  return m;
+}
+
 // rooftop building: brick-red walls + windows + a 0.5 m parapet curb around the roof edge
 function buildRoofBuilding(cx, cz, w, l) {
   const g = new THREE.Group(); g.name = 'roofBuilding'; g.position.set(cx, 0, cz);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(w, ROOF_HEIGHT, l), brickMat);
-  body.position.y = ROOF_HEIGHT / 2; body.receiveShadow = true; g.add(body);
+  const bodyH = ROOF_HEIGHT - DECK_T;                     // deck makes up the rest
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, bodyH, l), brickMat);
+  body.position.y = bodyH / 2; body.receiveShadow = true; g.add(body);
+  g.add(buildRoofDeck(w, l));
   // parapet curb (0.5 m) on the four roof edges
   const pH = 0.5, pT = 0.15, yP = ROOF_HEIGHT + pH / 2;
   const curb = (sx, sz, x, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(sx, pH, sz), parapetMat); m.position.set(x, yP, z); g.add(m); };
@@ -1162,6 +1207,15 @@ tiltBtn.onclick = () => {
   rebuildAll();
   tiltBtn.textContent = panelTilted ? `◹ Tilt ${TILT_DEG}°` : '▭ Flat';
   tiltBtn.classList.toggle('btn-on', panelTilted);
+};
+
+// ---- roof deck material: concrete slab <-> trapezoidal metal sheet ----
+const roofMatBtn = document.getElementById('roofMatBtn');
+roofMatBtn.onclick = () => {
+  roofMaterial = (roofMaterial === 'concrete') ? 'metal' : 'concrete';
+  rebuildAll();
+  roofMatBtn.textContent = (roofMaterial === 'concrete') ? '▨ Concrete roof' : '▤ Metal sheet roof';
+  roofMatBtn.classList.toggle('btn-on', roofMaterial === 'metal');
 };
 
 // ---- zoom in / out buttons (same eased zoom the mouse wheel drives) ----

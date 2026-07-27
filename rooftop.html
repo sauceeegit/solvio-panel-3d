@@ -205,7 +205,8 @@ let panelType = 'black';    // 'black' (all-black mono) | 'classic' (blue cells,
 let balconyType = 'baluster'; // 'baluster' (metal bars) | 'glass' (frameless glass panel, top rail only)
 let panelCount = 2;           // rooftop build opens with a pair of panels side by side
 const PANEL_GAP = 0.03;       // 3 cm horizontal gap (balcony row & garden columns)
-const GARDEN_ROW_GAP = 0.10;  // 10 cm gap where panels meet along their LONG side (rooftop flat-lay)
+const IN_ROW_GAP = 0.10;      // 10 cm between panels within a row (short edge to short edge)
+const ROW_GAP    = 0.40;      // 40 cm between rows
 const RAIL_EXT = 0.06;        // rails run past each panel end so they stay visible in that gap
 let panelTilted = false;      // flat, or tilted up on two columns along one long edge
 const TILT_DEG = 15;          // tilt angle when raised
@@ -695,8 +696,8 @@ function facadePerRow() { return Math.max(1, Math.floor((facadeWidth + PANEL_GAP
 
 // garden/roof grid capacity: panels per row across the width, and rows down the length
 function gardenGrid() {
-  const perRow = Math.max(1, Math.floor((plotW() + GARDEN_ROW_GAP) / (GARDEN_SPAN_X + GARDEN_ROW_GAP)));
-  const rows   = Math.max(1, Math.floor((plotL() + GARDEN_ROW_GAP) / (GARDEN_SPAN_Z + GARDEN_ROW_GAP)));
+  const perRow = Math.max(1, Math.floor((plotW() + IN_ROW_GAP) / (GARDEN_SPAN_X + IN_ROW_GAP)));
+  const rows   = Math.max(1, Math.floor((plotL() + ROW_GAP)    / (GARDEN_SPAN_Z + ROW_GAP)));
   return { perRow, rows };
 }
 
@@ -904,13 +905,13 @@ function buildAssembly(mode) {
     const dropY = base.position.y;                   // unit origin sits on the surface
     const { perRow } = gardenGrid();
     const rowsUsed = Math.ceil(N / perRow);
-    const stepX = GARDEN_SPAN_X + GARDEN_ROW_GAP, stepZ = GARDEN_SPAN_Z + GARDEN_ROW_GAP;
-    const gridD = rowsUsed * GARDEN_SPAN_Z + (rowsUsed - 1) * GARDEN_ROW_GAP;
+    const stepX = GARDEN_SPAN_X + IN_ROW_GAP, stepZ = GARDEN_SPAN_Z + ROW_GAP;
+    const gridD = rowsUsed * GARDEN_SPAN_Z + (rowsUsed - 1) * ROW_GAP;
     const z0 = -gridD / 2 + GARDEN_SPAN_Z / 2;
     for (let i = 0; i < N; i++) {
       const row = Math.floor(i / perRow), col = i % perRow;
       const inRow = (row < rowsUsed - 1) ? perRow : (N - perRow * (rowsUsed - 1));
-      const rowW = inRow * GARDEN_SPAN_X + (inRow - 1) * GARDEN_ROW_GAP;
+      const rowW = inRow * GARDEN_SPAN_X + (inRow - 1) * IN_ROW_GAP;
       const x0 = -rowW / 2 + GARDEN_SPAN_X / 2;
       const u = (i === 0) ? base : base.clone(true);
       u.position.x = x0 + col * stepX;               // next panel sits at the short edge (+x)

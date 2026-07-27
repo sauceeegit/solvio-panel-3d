@@ -345,7 +345,6 @@ const gardenGroundMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: m
 const grassMat = new THREE.MeshStandardMaterial({ color: 0x4c7a30, roughness: 1.0, metalness: 0.0 }); // grass tufts
 const ROOF_HEIGHT = 3;    // rooftop building height (m)
 const brickMat   = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeBrickMap(), roughness: 0.88, metalness: 0.0 }); // brick walls
-const parapetMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeConcreteMap(true), roughness: 0.88, metalness: 0.0 }); // concrete coping
 const windowMat  = new THREE.MeshStandardMaterial({ color: 0x223243, roughness: 0.15, metalness: 0.40, side: THREE.DoubleSide }); // glass
 const concreteMat  = new THREE.MeshStandardMaterial({ color: 0xb9b7b1, roughness: 0.95, metalness: 0.0 });  // concrete roof deck
 const metalRoofMat = new THREE.MeshStandardMaterial({ color: 0x9aa2aa, roughness: 0.34, metalness: 0.78 }); // trapezoidal metal sheet
@@ -737,18 +736,13 @@ function buildRoofDeck(w, l) {
   return m;
 }
 
-// rooftop building: brick-red walls + windows + a 0.5 m parapet curb around the roof edge
+// rooftop building: brick-red walls + windows, open roof edge (no parapet)
 function buildRoofBuilding(cx, cz, w, l) {
   const g = new THREE.Group(); g.name = 'roofBuilding'; g.position.set(cx, 0, cz);
   const bodyH = ROOF_HEIGHT - DECK_T;                     // deck makes up the rest
   const body = new THREE.Mesh(new THREE.BoxGeometry(w, bodyH, l), brickMat);
   body.position.y = bodyH / 2; body.receiveShadow = true; g.add(body);
   g.add(buildRoofDeck(w, l));
-  // parapet curb (0.5 m) on the four roof edges
-  const pH = 0.5, pT = 0.15, yP = ROOF_HEIGHT + pH / 2;
-  const curb = (sx, sz, x, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(sx, pH, sz), parapetMat); m.position.set(x, yP, z); g.add(m); };
-  curb(w, pT, 0,  l / 2 - pT / 2); curb(w, pT, 0, -l / 2 + pT / 2);   // front / back
-  curb(pT, l, w / 2 - pT / 2, 0);  curb(pT, l, -w / 2 + pT / 2, 0);   // right / left
   // windows: a row on each wall
   const winW = 1.1, winH = 1.4, wy = 1.5, off = 0.03;
   const place = (len) => { const n = Math.max(1, Math.floor(len / 2.4)); const span = len - winW - 0.8;

@@ -1,0 +1,1580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Solvio Panel — Rooftop 3D</title>
+<style>
+  :root { color-scheme: light; }
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  /* The 3D canvas fills the viewport ABOVE the bottom control section; JS keeps
+     the bottom offset in sync with the actual bar height (it wraps on mobile). */
+  #app { position: fixed; left: 0; right: 0; top: 0; bottom: 96px; }
+  /* Half-transparent "drag" affordance over the model — fades out on first drag. */
+  #draghint {
+    position: absolute; left: 50%; bottom: 15%; transform: translateX(-50%);
+    z-index: 6; pointer-events: none; user-select: none; white-space: nowrap;
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 16px; border-radius: 999px;
+    background: rgba(20,22,24,.34); color: rgba(255,255,255,.92);
+    font-size: 13px; font-weight: 600; letter-spacing: .3px;
+    backdrop-filter: blur(4px);
+    opacity: .78; transition: opacity .5s ease;
+    animation: draghint-bob 2s ease-in-out infinite;
+  }
+  #draghint.hide { opacity: 0; }
+  @keyframes draghint-bob { 0%,100% { transform: translate(-50%,0) } 50% { transform: translate(-50%,-5px) } }
+  #hud {
+    position: fixed; left: 16px; bottom: 14px; z-index: 10;
+    color: #5b5b5b; font-size: 12px; line-height: 1.5; letter-spacing: .2px;
+    background: rgba(255,255,255,.55); backdrop-filter: blur(6px);
+    padding: 9px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,.06);
+    user-select: none;
+  }
+  #hud b { color: #222; font-weight: 600; }
+  #angle {
+    position: fixed; left: 18px; top: 66px; z-index: 10; user-select: none;
+    color: #5b5b5b; font-size: 12px; letter-spacing: .2px; font-variant-numeric: tabular-nums;
+    background: rgba(255,255,255,.55); backdrop-filter: blur(6px);
+    padding: 7px 11px; border-radius: 9px; border: 1px solid rgba(0,0,0,.06);
+  }
+  #angle b { color: #222; font-weight: 600; }
+  #title {
+    position: fixed; left: 18px; top: 16px; z-index: 10; user-select: none;
+    color: #2b2b2b; font-weight: 600; font-size: 15px; letter-spacing: .3px;
+  }
+  #title span { display:block; color:#7a7a7a; font-weight:400; font-size:11px; margin-top:2px; }
+  /* Auto-rotate / Frame / Labels stay functional for the postMessage API but are
+     hidden from the UI (requested 2026-07-10). */
+  #spin { display: none; }   /* Frame + Labels now live in the bottom bar (rooftop build) */
+  /* ROOFTOP-ONLY BUILD: this page is locked to the rooftop scene, so the scene
+     switcher, tilt/vertical, building and railing toggles are hidden. Only the
+     panel-type (All-black / Classic) toggle stays in the bottom bar. */
+  #bldgBtn, #sceneBtn, #modeBtn, #railBtn { display: none; }
+  /* zoom in / out buttons floated over the model */
+  #zoomCtrl {
+    position: absolute; right: 14px; top: 14px; z-index: 8;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  #zoomCtrl button {
+    width: 34px; height: 34px; font-size: 19px; line-height: 1; color: #333; cursor: pointer;
+    background: rgba(255,255,255,.88); border: 1px solid rgba(0,0,0,.14); border-radius: 8px;
+    backdrop-filter: blur(6px);
+  }
+  #zoomCtrl button:active { background: #ececec; }
+  #sceneBtn, #modeBtn, #typeBtn, #railBtn, #frameBtn, #labelBtn, #tiltBtn {
+    font-size: 14px; color:#444; background: #fff;
+    border: 1px solid rgba(0,0,0,.14); border-radius: 9px; padding: 9px 15px; cursor: pointer;
+    text-align: left; white-space: nowrap;
+  }
+  #modeBtn:disabled, #bldgBtn:disabled, #railBtn:disabled { opacity: .4; cursor: default; }
+  .btn-on { background: #1a1a1a !important; color: #fff !important; border-color: #1a1a1a !important; }
+  /* Bottom control section — a solid strip UNDER the 3D canvas (not an overlay). */
+  #bctrl {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    display: flex; flex-wrap: wrap; gap: 12px 22px; align-items: flex-end; justify-content: center;
+    user-select: none;
+    background: #f4f5f7; border-top: 1px solid rgba(0,0,0,.09);
+    padding: 12px 16px; font-size: 12px; color: #555;
+  }
+  #bctrl .ctrlgroup { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; }
+  #bctrl #modeRow { align-items: center; gap: 8px; }
+  #bctrl label { display: flex; flex-direction: column; gap: 4px; }
+  #bctrl b { color: #222; font-weight: 600; font-variant-numeric: tabular-nums; }
+  #bctrl input[type=range] { width: 160px; accent-color: #e8392b; }
+  #bctrl .pcrow { display: flex; gap: 6px; align-items: center; height: 22px; }
+  #bctrl .pcrow button {
+    width: 26px; height: 22px; font-size: 15px; line-height: 1; color: #333;
+    border: 1px solid rgba(0,0,0,.15); border-radius: 6px; background: rgba(255,255,255,.7); cursor: pointer;
+  }
+  #bctrl .pcrow button:disabled { opacity: .35; cursor: default; }
+  /* Reserve a fixed slot for the "full" message so the +/- row never wraps to
+     a second line when it appears. */
+  #bctrl #pcMsg { color: #e8392b; font-size: 12px; white-space: nowrap; min-width: 30px; }
+  /* Embedded in the product configurator (?embed=1): the parent's React
+     configurator drives the scene (Location) and panel type (Module), so hide
+     those toggles and the title/angle overlays. The bar stays visible with just
+     Tilted, railing type, the dimension sliders and the panel count. */
+  body.embed #title,
+  body.embed #angle,
+  body.embed #sceneBtn,
+  body.embed #typeBtn { display: none !important; }
+  /* Embedded on MOBILE: keep only the two dimension sliders on a single row —
+     drop the tilt/railing buttons; the panel counter is floated into the model
+     frame (see #app > #panelsCtrl + the JS that moves it). */
+  @media (max-width: 1023px) {
+    body.embed #modeRow { display: none !important; }
+    body.embed #balconyCtrls,
+    body.embed #gardenCtrls { flex-wrap: nowrap; gap: 12px; }
+    body.embed #bctrl label { white-space: nowrap; }
+    body.embed #bctrl input[type=range] { width: 104px; }
+  }
+  /* Panel counter floated into the bottom-right of the model frame (mobile
+     embed). The JS moves #panelsCtrl into #app; these styles restyle it there
+     since it leaves the #bctrl label / .pcrow scope. */
+  #app > #panelsCtrl {
+    position: absolute; right: 10px; bottom: 10px; z-index: 6; margin: 0;
+    display: flex; flex-direction: row; align-items: center; gap: 8px;
+    padding: 5px 7px 5px 12px; border-radius: 999px; white-space: nowrap;
+    background: rgba(255,255,255,.86); backdrop-filter: blur(6px);
+    box-shadow: 0 2px 12px rgba(0,0,0,.16);
+    font-size: 12px; font-weight: 600; color: #333;
+  }
+  #app > #panelsCtrl b { color: #111; }
+  #app > #panelsCtrl #pcMsg { display: none; }
+  #app > #panelsCtrl .pcrow { display: flex; gap: 6px; align-items: center; }
+  #app > #panelsCtrl .pcrow button {
+    width: 28px; height: 28px; font-size: 17px; line-height: 1; color: #333;
+    border: 1px solid rgba(0,0,0,.16); border-radius: 8px; background: #fff; cursor: pointer;
+  }
+  #app > #panelsCtrl .pcrow button:disabled { opacity: .35; cursor: default; }
+</style>
+</head>
+<body>
+<div id="app"><div id="draghint">✋ Drag with your finger</div>
+  <div id="zoomCtrl"><button id="zoomIn" type="button" title="Zoom in">+</button><button id="zoomOut" type="button" title="Zoom out">−</button></div>
+</div>
+<div id="title">Solvio 3D model — Rooftop</div>
+<div id="angle">—</div>
+<button id="spin">▶ Auto-rotate</button>
+<div id="bctrl">
+  <span class="ctrlgroup" id="modeRow">
+    <button id="sceneBtn">▤ Balcony</button>
+    <button id="typeBtn">◧ All-black</button>
+    <button id="tiltBtn">▭ Flat</button>
+    <button id="frameBtn">☑ Frame</button>
+    <button id="labelBtn">☑ Labels</button>
+    <button id="modeBtn">◹ Tilted</button>
+    <button id="bldgBtn">☑ Building</button>
+    <button id="railBtn">▥ Bar railing</button>
+  </span>
+  <span class="ctrlgroup" id="balconyCtrls" style="display:none">
+    <label>Balcony length &nbsp;<b><span id="lenOut">5.3</span> m</b>
+      <input id="lenSlider" type="range" min="1.8" max="12" step="0.1" value="5.3" autocomplete="off" /></label>
+    <label>Railing height &nbsp;<b><span id="depOut">0.95</span> m</b>
+      <input id="depSlider" type="range" min="0.7" max="1.4" step="0.05" value="0.95" autocomplete="off" /></label>
+  </span>
+  <span class="ctrlgroup" id="gardenCtrls">
+    <label><span id="gwLbl">Roof</span> width &nbsp;<b><span id="gwOut">7.0</span> m</b>
+      <input id="gwSlider" type="range" min="2" max="15" step="0.1" value="7" autocomplete="off" /></label>
+    <label id="glField"><span id="glLbl">Roof</span> length &nbsp;<b><span id="glOut">7.0</span> m</b>
+      <input id="glSlider" type="range" min="2" max="15" step="0.1" value="7" autocomplete="off" /></label>
+  </span>
+  <label id="panelsCtrl">Panels &nbsp;<b><span id="pcOut">2</span></b>
+    <span class="pcrow"><button id="pcMinus" type="button">−</button><button id="pcPlus" type="button">+</button><small id="pcMsg"></small></span></label>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+
+// When embedded in the product page (?embed=1) the React configurator drives the
+// model, so hide the in-model UI (see body.embed CSS) for a clean, full-frame
+// canvas. Set before any layout is measured below.
+const EMBEDDED = new URLSearchParams(location.search).get('embed') === '1';
+if (EMBEDDED) document.body.classList.add('embed');
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+// ---- real-world dimensions (metres) ----
+const W = 1.133;      // width
+const H = 1.761;      // height
+const D = 0.00475;    // thickness 4.75 mm — true to spec (frameless glass-glass laminate)
+const R = 0.012;      // corner radius
+const BORDER = 0.014; // black laminate border (no cells)
+
+// ---- balcony dimensions (live-adjustable via sliders) ----
+let balconyLen = 3 * H;    // handrail run along x (m)
+let railingHeight = 0.95;  // floor-to-top-rail height (m); depth fixed at 1.2 m
+let gardenWidth = 5, gardenLength = 5;   // garden plot (m): panels tile across width (x), wrap to rows in depth (z)
+let roofWidth = 7, roofLength = 7;       // rooftop building footprint (m)
+let facadeWidth = 6;                     // facade wall width (m); wall height fixed at 3 m
+const FIXED_RAILY = 0.945, FIXED_RAILZ = -0.367; // balcony stays here in both modes; panel+mount shift to hook onto it
+let buildingVisible = true; // wall + floor slab (the "building"); toggled by the Building button
+let panelType = 'black';    // 'black' (all-black mono) | 'classic' (blue cells, silver frame, gold badge)
+let balconyType = 'baluster'; // 'baluster' (metal bars) | 'glass' (frameless glass panel, top rail only)
+let panelCount = 2;           // rooftop build opens with a pair of panels side by side
+const PANEL_GAP = 0.03;       // 3 cm horizontal gap (balcony row & garden columns)
+const GARDEN_ROW_GAP = 0.10;  // 10 cm gap where panels meet along their LONG side (rooftop flat-lay)
+const RAIL_EXT = 0.06;        // rails run past each panel end so they stay visible in that gap
+let panelTilted = false;      // flat, or tilted up on two columns along one long edge
+const TILT_DEG = 15;          // tilt angle when raised
+const CELL_PALETTES = {
+  black:   { base: '#040405', cellA: '#0c0d12', cellB: '#090a0e',
+             finger: 'rgba(40,44,55,0.28)', bus: 'rgba(70,76,90,0.30)', cham: 'rgba(0,0,0,0.55)',
+             vignette: 'rgba(0,0,0,0.35)', badge: false },
+  classic: { base: '#eceef2', cellA: '#111318', cellB: '#0a0b0f',
+             finger: 'rgba(120,126,140,0.22)', bus: 'rgba(150,156,170,0.30)', cham: null,
+             vignette: 'rgba(0,0,0,0.16)', badge: false }
+};
+let lastRailY = 0.945, lastRailZ = -0.37; // hook grab-line captured from the last assembly build
+
+// ---- renderer ----
+const app = document.getElementById('app');
+// Keep the canvas area's bottom edge flush with the top of the control bar
+// (the bar wraps to more rows on narrow screens).
+const bctrlEl = document.getElementById('bctrl');
+const syncBarOffset = () => { app.style.bottom = `${bctrlEl.offsetHeight}px`; };
+syncBarOffset();
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(app.clientWidth, app.clientHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = false;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+
+// On mobile embed, float the panel counter into the bottom-right of the model
+// frame (out of the bottom bar) so the bar holds just the two dimension sliders.
+if (EMBEDDED && matchMedia('(max-width: 1023px)').matches) {
+  const pc = document.getElementById('panelsCtrl');
+  if (pc) { app.appendChild(pc); syncBarOffset(); }
+}
+
+// Dismiss the "drag" hint on the first interaction (or after a few seconds).
+(function () {
+  const hint = document.getElementById('draghint');
+  if (!hint) return;
+  // Touch devices → "finger"; mouse (desktop) → "mouse".
+  const touch = window.matchMedia('(pointer: coarse)').matches;
+  hint.textContent = touch ? '✋ Drag with your finger' : '🖱 Drag with your mouse';
+  const kill = () => {
+    hint.classList.add('hide');
+    setTimeout(() => hint.remove(), 600);
+    app.removeEventListener('pointerdown', kill);
+  };
+  app.addEventListener('pointerdown', kill, { once: true });
+  setTimeout(kill, 6000);
+})();
+
+// ---- scene ----
+const scene = new THREE.Scene();
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+pmrem.compileCubemapShader();
+
+// ---- camera ----
+const camera = new THREE.PerspectiveCamera(38, app.clientWidth/app.clientHeight, 0.01, 100);
+camera.position.set(3.4, 1.6, 4.0);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.minDistance = 0.6;
+controls.maxDistance = 30;   // rooftop scenes need more room than the balcony close-up
+controls.target.set(0, 0.5, -0.05);
+
+// ---- smooth, device-independent zoom ----
+// three.js scales wheel zoom by |deltaY|, so a trackpad flick or hi-res mouse
+// sends a huge delta and the view lurches. Disable the built-in zoom and drive
+// it ourselves: clamp each wheel event to a small fixed step and ease the camera
+// toward a target distance, so zoom stays gradual on any input device.
+controls.enableZoom = false;
+let zoomTarget = camera.position.distanceTo(controls.target);
+let zooming = false;
+const syncZoom = () => { zoomTarget = camera.position.distanceTo(controls.target); zooming = false; };
+renderer.domElement.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const step = Math.max(-40, Math.min(40, e.deltaY)) * 0.0016;   // clamp magnitude → fixed-ish step
+  zoomTarget = THREE.MathUtils.clamp(zoomTarget * Math.exp(step), controls.minDistance, controls.maxDistance);
+  zooming = true;
+}, { passive: false });
+
+// ---- physically-based sky (Rayleigh + Mie scattering) ----
+const sky = new Sky();
+sky.scale.setScalar(10000);
+scene.add(sky);
+const skyU = sky.material.uniforms;
+skyU['turbidity'].value    = 3;      // cleaner tropical sky
+skyU['rayleigh'].value     = 1.0;    // vivid blue
+skyU['mieCoefficient'].value     = 0.004;
+skyU['mieDirectionalG'].value    = 0.85;
+const SUN_DIR = new THREE.Vector3();
+// Sun at ~38° elevation, 200° azimuth — matches key light angle
+SUN_DIR.setFromSphericalCoords(1, THREE.MathUtils.degToRad(52), THREE.MathUtils.degToRad(200));
+skyU['sunPosition'].value.copy(SUN_DIR);
+
+// Generate env map FROM the sky so reflections match the background exactly
+const skyScene = new THREE.Scene(); skyScene.add(sky);
+scene.environment = pmrem.fromScene(skyScene, 0.04, 0.01, 2000).texture;
+scene.add(sky); // move back after baking
+sky.material.fog = false;  // sky is at scale 10000 — don't fog it out
+scene.fog = new THREE.Fog(0xd4e8f5, 18, 60);  // gentle linear haze for depth, far enough to not touch the sky
+
+// Sun directional light matching the sky's sun position
+const sunLight = new THREE.DirectionalLight(0xfffae8, 2.8); // warm tropical sun
+sunLight.position.set(SUN_DIR.x * 10, SUN_DIR.y * 10, SUN_DIR.z * 10);
+sunLight.target.position.set(0, 0.3, 0);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+sunLight.shadow.camera.near = 0.5; sunLight.shadow.camera.far = 20;
+sunLight.shadow.camera.left = -5; sunLight.shadow.camera.right = 5;
+sunLight.shadow.camera.top = 5; sunLight.shadow.camera.bottom = -5;
+sunLight.shadow.bias = -0.0003; sunLight.shadow.normalBias = 0.02;
+scene.add(sunLight); scene.add(sunLight.target);
+// Sky bounce: warm sky top, green-brown ground bounce
+scene.add(new THREE.HemisphereLight(0x9ec8f0, 0x6b7c3e, 0.35));
+
+// ---- ground shadow catcher ----
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(14, 14),
+  new THREE.ShadowMaterial({ opacity: 0.30 })
+);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = 0;
+ground.receiveShadow = true;
+scene.add(ground);
+// garden lawn (Garden mode) + building (Rooftop mode)
+const gardenGroundMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeGrassMap(), roughness: 0.95, metalness: 0.0 });
+const grassMat = new THREE.MeshStandardMaterial({ color: 0x4c7a30, roughness: 1.0, metalness: 0.0 }); // grass tufts
+const ROOF_HEIGHT = 3;    // rooftop building height (m)
+const brickMat   = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeBrickMap(), roughness: 0.88, metalness: 0.0 }); // brick walls
+const parapetMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeConcreteMap(true), roughness: 0.88, metalness: 0.0 }); // concrete coping
+const windowMat  = new THREE.MeshStandardMaterial({ color: 0x223243, roughness: 0.15, metalness: 0.40, side: THREE.DoubleSide }); // glass
+const FACADE_WALL_H = 4.5;   // facade wall height (m)
+const facadeWallMat = new THREE.MeshStandardMaterial({ color: 0x7ba0c4, roughness: 0.9, metalness: 0.0 }); // darker blue wall
+
+// ---- the panel (built here, then mounted on the frame below) ----
+// front glass with procedural cell texture
+let cellTex = makeCellTexture(panelType);
+cellTex.colorSpace = THREE.SRGBColorSpace;
+
+const shape = roundedRectShape(W, H, R);
+const geo = new THREE.ExtrudeGeometry(shape, { depth: D, bevelEnabled: false, curveSegments: 6 });
+geo.translate(0, 0, -D/2);
+// remap cap UVs (ExtrudeGeometry caps are in world XY) -> 0..1
+cellTex.repeat.set(1/W, 1/H);
+cellTex.offset.set(0.5, 0.5);
+
+const glassMat = new THREE.MeshPhysicalMaterial({
+  map: cellTex,
+  color: 0xffffff,
+  metalness: 0.0,
+  roughness: 0.18,
+  clearcoat: 1.0,
+  clearcoatRoughness: 0.04,
+  reflectivity: 0.5,
+  specularIntensity: 0.9,
+  envMapIntensity: 0.7,   // lower so cell texture isn't drowned by sky reflection
+  // Iridescence = the blue-green AR coating shimmer real panels have
+  iridescence: 0.6,
+  iridescenceIOR: 1.5,
+  iridescenceThicknessRange: [150, 400],
+});
+const edgeMat = new THREE.MeshStandardMaterial({ color: 0x141516, metalness: 0.85, roughness: 0.25, envMapIntensity: 1.1 }); // black anodized aluminum frame
+// backsheet on the panel rear — white for the classic type, dark for the all-black type
+const backMat = new THREE.MeshStandardMaterial({ color: 0x0e0e10, roughness: 0.72, metalness: 0.0, side: THREE.DoubleSide });
+function setBacksheetColor() { backMat.color.set(panelType === 'classic' ? 0xeef0f3 : 0x0e0e10); }
+setBacksheetColor();
+
+// =================== shared frame materials + helpers (used by every build) ===================
+const metal     = new THREE.MeshStandardMaterial({ color: 0x1a1c1e, metalness: 0.85, roughness: 0.30, envMapIntensity: 1.2 }); // matte black anodized
+const metalDark = new THREE.MeshStandardMaterial({ color: 0x111214, metalness: 0.80, roughness: 0.40, envMapIntensity: 1.0 });
+
+function makeBeam(p1, p2, bw, bh, mat) {            // rectangular box-section strut between two points
+  const dir = new THREE.Vector3().subVectors(p2, p1);
+  const len = dir.length();
+  const m = new THREE.Mesh(new THREE.BoxGeometry(bw, len, bh), mat);
+  m.castShadow = true; m.receiveShadow = true;
+  m.position.copy(p1).addScaledVector(dir, 0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  return m;
+}
+function flatBeam(p1, p2, faceDir, w, t, mat) {     // beam twisted so a flat face aligns with faceDir
+  const dir = new THREE.Vector3().subVectors(p2, p1); const len = dir.length(); dir.normalize();
+  const tAxis = faceDir.clone().normalize();
+  const wAxis = new THREE.Vector3().crossVectors(dir, tAxis).normalize();
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, len, t), mat);
+  m.castShadow = true; m.receiveShadow = true;
+  m.position.copy(p1).addScaledVector(dir, len / 2);
+  m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(wAxis, dir, tAxis));
+  return m;
+}
+function footPad(p) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.012, 0.10), metalDark);
+  m.castShadow = true; m.receiveShadow = true;
+  m.position.set(p.x, 0.006, p.z);
+  return m;
+}
+// flat bent-strap hook: bolted onto the vertical front rail, curling INWARD (toward -n / rear,
+// where a balcony railing sits). Thickness Tb matches the frame bars; flat faces point sideways.
+const HOOK_T = 0.04;                                // hook width across = vertical column width
+const HOOK_R = 0.036, HOOK_CY = 0.030;              // U-bend radius + bend-start height (shared with the balcony rail)
+const RAIL_Y = 0.945;                               // balcony handrail height — both mounts hook here
+function makeHook(top) {
+  const Wb = 0.005;                                 // strap width
+  // Side-view candy-cane in the vertical/depth plane. a = rearward (away from the panel),
+  // b = world-up. The straight slotted part runs down the VERTICAL column; the U curls over
+  // the top toward the rear and opens straight down.
+  const Rr = HOOK_R;                                // U-bend centerline radius (shared constant)
+  const cy = HOOK_CY, tailY = -0.012, riserY = -0.16; // bend start height, tail bottom, riser bottom
+  const arc = [150, 120, 90, 60, 30].map(deg => {   // clean 180° (half-circle) bend at radius Rr
+    const t = deg * Math.PI / 180;
+    return [Rr + Rr * Math.cos(t), cy + Rr * Math.sin(t)];
+  });
+  const key = [                                     // straight riser + the parametric half-circle bend
+    [0, riserY], [0, -0.05], [0, 0.005], [0, cy],
+    ...arc,
+    [2 * Rr, cy], [2 * Rr, 0.008], [2 * Rr, tailY]
+  ];
+  const spline = new THREE.CatmullRomCurve3(key.map(p => new THREE.Vector3(p[0], p[1], 0)), false, 'catmullrom', 0.5);
+  const cl = spline.getPoints(44).map(v => [v.x, v.y]);
+  const left = [], right = [];
+  for (let i = 0; i < cl.length; i++) {
+    const p = cl[i];
+    const a = cl[Math.max(0, i - 1)], b = cl[Math.min(cl.length - 1, i + 1)];
+    let nx = -(b[1] - a[1]), ny = (b[0] - a[0]);
+    const L = Math.hypot(nx, ny) || 1; nx /= L; ny /= L;
+    left.push([p[0] + nx * Wb / 2, p[1] + ny * Wb / 2]);
+    right.push([p[0] - nx * Wb / 2, p[1] - ny * Wb / 2]);
+  }
+  const shape = new THREE.Shape();
+  shape.moveTo(left[0][0], left[0][1]);
+  for (let i = 1; i < left.length; i++) shape.lineTo(left[i][0], left[i][1]);
+  for (let i = right.length - 1; i >= 0; i--) shape.lineTo(right[i][0], right[i][1]);
+  shape.closePath();
+  const g = new THREE.ExtrudeGeometry(shape, { depth: HOOK_T, bevelEnabled: false, curveSegments: 3 });
+  g.translate(0, 0, -HOOK_T / 2);
+  const m = new THREE.Mesh(g, metal);
+  m.castShadow = true; m.receiveShadow = true;
+  // local X -> rearward (-z), local Y -> world up (+y), thickness (local Z) -> across (+x); broad face ±x
+  m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0)));
+  m.position.copy(top);
+  return m;
+}
+
+// numbered-label sprite (added per build)
+function numberSprite(pos, text) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#e8392b'; c.beginPath(); c.arc(64, 64, 54, 0, Math.PI * 2); c.fill();
+  c.lineWidth = 6; c.strokeStyle = '#fff'; c.stroke();
+  c.fillStyle = '#fff'; c.font = 'bold 74px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(text, 64, 72);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, transparent: true }));
+  sp.scale.set(0.085, 0.085, 0.085);
+  sp.position.copy(pos);
+  sp.renderOrder = 999;
+  return sp;
+}
+
+// =================== building balcony the panel hooks onto ===================
+// railY/railZ = world position of the hooks' U-bend centre (same for both legs).
+// The handrail nestles up into the hook apex; balusters + slab + wall sit behind it.
+function buildBalcony(parent, railY, railZ) {
+  const g = new THREE.Group(); g.name = 'balcony'; g.visible = buildingVisible; parent.add(g);
+
+  const L = balconyLen;                                // handrail run (live-adjustable length)
+  const railR = 0.022;                                 // handrail tube radius (fits inside the hooks)
+  const railCY = railY + (HOOK_R - 0.0025 - railR);    // top rail sits at the hook grab-line (fixed)
+  const floorDepth = 1.2;                              // balcony depth, fixed at 1.2 m
+  const floorY = railCY - railingHeight;               // drop the floor to set the railing height
+  const lowY = floorY + 0.10;                          // lower rail just above the floor
+
+  const rail     = new THREE.MeshStandardMaterial({ color: 0x4a5058, metalness: 0.75, roughness: 0.35, envMapIntensity: 1.0 }); // anthracite powder-coated steel
+  const railD    = new THREE.MeshStandardMaterial({ color: 0x383d44, metalness: 0.70, roughness: 0.45 });
+  const concrete = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeConcreteMap(), metalness: 0.0, roughness: 0.95 });
+  const wallMat  = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeStuccoMap(), metalness: 0.0, roughness: 0.88 });
+  const wallMatSolid = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeStuccoMap(), metalness: 0.0, roughness: 0.88 });
+
+  const tube = (len, r, mat) => {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 20), mat);
+    m.castShadow = true; m.receiveShadow = true; return m;
+  };
+
+  if (balconyType === 'glass') {
+    // square-section top handrail sized to sit within the hook's U (hook inner opening ~67 mm)
+    const sq = 0.032;
+    const topBar = new THREE.Mesh(new THREE.BoxGeometry(L, sq, sq), rail);
+    topBar.position.set(0, railCY, railZ); topBar.castShadow = topBar.receiveShadow = true; g.add(topBar);
+    // frameless glass balustrade below the rail
+    const glassBal = new THREE.MeshPhysicalMaterial({ color: 0xdfeaf0, metalness: 0.0, roughness: 0.06,
+      transmission: 0.9, thickness: 0.012, ior: 1.5, transparent: true, envMapIntensity: 1.0 });
+    const gTop = railCY - sq / 2, gBot = floorY, gH = Math.max(0.05, gTop - gBot); // glass spans slab top up to the square bar
+    const glass = new THREE.Mesh(new THREE.BoxGeometry(L, gH, 0.012), glassBal);
+    glass.position.set(0, (gTop + gBot) / 2, railZ); g.add(glass);
+  } else {
+    // round top handrail — the bar the hooks grab
+    const top = tube(L, railR, rail); top.rotation.z = Math.PI / 2; top.position.set(0, railCY, railZ); g.add(top);
+    // lower rail just above the floor
+    const low = tube(L, railR * 0.8, rail); low.rotation.z = Math.PI / 2; low.position.set(0, lowY, railZ); g.add(low);
+    // end posts (floor up to top rail)
+    const postLen = (railCY + 0.04) - floorY;
+    for (const px of [-L / 2, L / 2]) {
+      const post = tube(postLen, 0.028, railD); post.position.set(px, (floorY + railCY + 0.04) / 2, railZ); g.add(post);
+    }
+    // balusters (lower rail up to top rail)
+    const n = Math.max(2, Math.round(L / 0.11));
+    for (let i = 0; i <= n; i++) {
+      const b = tube(railCY - lowY, 0.006, rail);
+      b.position.set(-L / 2 + i * (L / n), (railCY + lowY) / 2, railZ); g.add(b);
+    }
+  }
+  // concrete floor slab + building wall (floor top at floorY)
+  const groundGrp = new THREE.Group(); groundGrp.name = 'balconyGround'; g.add(groundGrp);
+  const slabFront = railZ + 0.03;                      // floor reaches forward just up to the balcony railing
+  const slabBack  = railZ - 0.02 - floorDepth;         // keep the original back edge (at the wall)
+  const slabDepth = slabFront - slabBack;
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, 0.2, slabDepth), wallMatSolid); // match the opaque lower wall
+  slab.position.set(0, floorY - 0.1, (slabFront + slabBack) / 2);
+  slab.receiveShadow = true; slab.castShadow = true; groundGrp.add(slab);
+  const wallZ = railZ - floorDepth - 0.1;
+  const wallTop = floorY + 1.6;                        // top lowered 1 m
+  const wallBot = (floorY - 0.2) - 0.5;                // 0.5 m below the slab underside
+  const slabTop = floorY;                              // split line = top of the base slab
+  // upper section (above slab top): 50% transparent
+  const upH = wallTop - slabTop;
+  const wallUp = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, upH, 0.2), wallMat);
+  wallUp.position.set(0, (wallTop + slabTop) / 2, wallZ); wallUp.receiveShadow = true; groundGrp.add(wallUp);
+  // lower section (below slab top): opaque
+  const loH = slabTop - wallBot;
+  const wallLo = new THREE.Mesh(new THREE.BoxGeometry(L + 0.4, loH, 0.2), wallMatSolid);
+  wallLo.position.set(0, (slabTop + wallBot) / 2, wallZ); wallLo.receiveShadow = true; groundGrp.add(wallLo);
+
+  return g;
+}
+
+// =================== back-of-panel components: 3 junction boxes + 2 cables + 2 MC4 connectors ===================
+// Built in the panel's local frame (x = width 1.133 m, y = height 1.761 m, z = thickness; front = +z).
+function buildBackComponents() {
+  const g = new THREE.Group(); g.name = 'backComponents';
+  const boxMat  = new THREE.MeshStandardMaterial({ color: 0x1b1b1d, roughness: 0.60, metalness: 0.10 });
+  const cableMat = new THREE.MeshStandardMaterial({ color: 0x0c0c0d, roughness: 0.75, metalness: 0.00 });
+  const connMat = new THREE.MeshStandardMaterial({ color: 0x2b2b2e, roughness: 0.45, metalness: 0.25 });
+  const bz = -D / 2 - 0.008;                          // sit just off the back face, protruding away from the front
+  const boxGeo = new THREE.BoxGeometry(0.10, 0.035, 0.016);   // "rectangular box" junction box
+  const box = (x) => { const m = new THREE.Mesh(boxGeo, boxMat); m.position.set(x, 0, bz); m.castShadow = m.receiveShadow = true; return m; };
+  const tube = (x1, x2, r, mat) => {                  // "circular tube" — x-aligned cylinder from x1 to x2
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, Math.abs(x2 - x1), 16), mat);
+    m.rotation.z = Math.PI / 2; m.position.set((x1 + x2) / 2, 0, bz);
+    m.castShadow = m.receiveShadow = true; return m;
+  };
+  g.add(box(-0.30), box(0), box(0.30));               // left, centre, right junction boxes
+  g.add(tube(-0.35, -0.44, 0.005, cableMat), tube(-0.44, -0.48, 0.011, connMat));  // left  cable + connector (points left)
+  g.add(tube( 0.35,  0.44, 0.005, cableMat), tube( 0.44,  0.48, 0.011, connMat));  // right cable + connector (points right)
+  return g;
+}
+
+// =================== build ONE panel + mount unit (tilted / vertical / garden) ===================
+// Rooftop build: lay the panel FLAT. The panel sits at 35° inside the unit, so
+// rotating by (35° - 90°) leaves its face pointing straight up.
+const GARDEN_ROT = THREE.MathUtils.degToRad(35) - Math.PI / 2;
+function buildPanelUnit(mode) {
+  const unit = new THREE.Group();
+  const vertical = (mode === 'vertical');
+  const garden = (mode === 'garden' || mode === 'rooftop');   // ground/roof stand: tilted A-frame sat on a surface
+
+  const TILT = vertical ? 0 : THREE.MathUtils.degToRad(35);
+  const u = new THREE.Vector3(0, Math.cos(TILT), -Math.sin(TILT));   // up the panel slope
+  const n = new THREE.Vector3(0, Math.sin(TILT),  Math.cos(TILT));   // panel front normal
+  const Ls = W, RAILX = 0.60, FFz = 0.34;
+  const bo = n.clone().multiplyScalar(-(D / 2 + 0.0125));            // frame fronts just touch the panel back
+
+  // panel: tilted (or upright) and turned landscape
+  const mesh = new THREE.Mesh(geo, [glassMat, edgeMat]);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  const Cc = new THREE.Vector3(0, 0, FFz).add(u.clone().multiplyScalar(Ls / 2));
+  if (vertical) Cc.y -= (Ls + HOOK_CY - RAIL_Y);    // drop the upright panel so its hooks hang on the handrail
+  const tilt = new THREE.Group(); tilt.position.copy(Cc); tilt.rotation.x = -TILT; unit.add(tilt);
+  const backsheet = new THREE.Mesh(new THREE.ShapeGeometry(roundedRectShape(W, H, R)), backMat);
+  backsheet.position.z = -D / 2 - 0.001;             // solid backsheet just behind the rear face
+  const land = new THREE.Group(); land.rotation.z = -Math.PI / 2; land.add(mesh); land.add(backsheet); land.add(buildBackComponents()); tilt.add(land);
+
+  const frame = new THREE.Group(); frame.name = 'frameGrp'; unit.add(frame);
+  const labelGroup = new THREE.Group(); labelGroup.name = 'labelGrp'; unit.add(labelGroup);
+  let partNo = 0;
+  let railY = 0, railZ = 0;                          // hook grab-line, captured below, used by the balcony
+  const reg = (m, pos) => { frame.add(m); labelGroup.add(numberSprite(pos, String(++partNo))); return m; };
+
+  const halfU = u.clone().multiplyScalar(Ls / 2);
+  const Pb = Cc.clone().sub(halfU);                 // panel bottom
+  const Pt = Cc.clone().add(halfU);                 // panel top
+
+  for (const sx of [-RAILX, RAILX]) {
+    if (vertical) {
+      // upright panel: rail + column + hook all coincident on the back (allowed to overlap), no base bar
+      const mountZ = Pt.z + bo.z;                                  // rail/column front touches panel back
+      const Bb = new THREE.Vector3(sx, Pb.y, mountZ), Tt = new THREE.Vector3(sx, Pt.y, mountZ);
+      const Cfoot = new THREE.Vector3(sx, Pb.y, mountZ), Ctop = new THREE.Vector3(sx, Pt.y, mountZ); // rails span the hanging panel
+      reg(makeBeam(Bb, Tt, 0.042, 0.025, metal), Bb.clone().lerp(Tt, 0.5));         // panel-mount rail
+      const col = makeBeam(Cfoot, Ctop, 0.025, 0.04, metal); col.rotateY(Math.PI / 2);
+      reg(col, Cfoot.clone().lerp(Ctop, 0.5));                                       // column (overlaps the rail)
+      reg(makeHook(Ctop), Ctop.clone().add(new THREE.Vector3(0, 0.10, -0.03)));      // hook (overlaps the column)
+      railY = Ctop.y + HOOK_CY; railZ = Ctop.z - HOOK_R;
+    } else {
+      // tilted A-frame: rail (to ground) + column (to panel back) + base bar + hook
+      const Bb = new THREE.Vector3(sx, Pb.y, Pb.z).add(bo);
+      Bb.addScaledVector(u, (0 - Bb.y) / u.y);                     // stop rail's lower end at the ground
+      const Tt = new THREE.Vector3(sx, Pt.y, Pt.z).add(bo);
+      const colBack = 0.006;
+      const colFrontZ = (Pt.z - colBack) + 0.0125;
+      const PbackTop  = Pt.clone().addScaledVector(n, -D / 2);
+      const Ctop = new THREE.Vector3(sx, PbackTop.y - n.z * (colFrontZ - PbackTop.z) / n.y, Pt.z - colBack);
+      Tt.addScaledVector(u, (Ctop.y - Tt.y) / u.y);               // lower rail top to the column top
+      const Cfoot = new THREE.Vector3(sx, -0.0125, Pt.z - colBack);
+      const BarRear = new THREE.Vector3(sx, 0, colFrontZ);        // rear end butts flush against the column front face (no embedment)
+      const Pback = Pb.clone().addScaledVector(n, -D / 2);
+      const Ffoot = new THREE.Vector3(sx, 0, Pback.z - n.y * (0.0125 - Pback.y) / n.z);
+      if (garden) {          // flat-lay: run the rail past both panel ends so it shows in the row gap
+        Bb.addScaledVector(u, -RAIL_EXT);
+        Tt.addScaledVector(u,  RAIL_EXT);
+      }
+      reg(makeBeam(Bb, Tt, 0.042, 0.025, metal), Bb.clone().lerp(Tt, 0.5));         // panel-mount rail (parts 1 & 4)
+      if (!garden) {                     // rooftop/garden flat-lay keeps ONLY the two panel-mount rails
+        const col = makeBeam(Cfoot, Ctop, 0.025, 0.04, metal); col.rotateY(Math.PI / 2);
+        reg(col, Cfoot.clone().lerp(Ctop, 0.5));                                     // vertical column
+        reg(makeBeam(BarRear, Ffoot, 0.040, 0.024, metalDark), BarRear.clone().lerp(Ffoot, 0.5)); // base bar 40 x 24mm
+      }
+      const hookTop = Ctop.clone(); hookTop.z -= (0.0125 + 0.0025);
+      if (!garden) reg(makeHook(hookTop), hookTop.clone().add(new THREE.Vector3(0, 0.10, -0.03))); // hook (none in garden)
+      railY = hookTop.y + HOOK_CY; railZ = hookTop.z - HOOK_R;
+    }
+  }
+
+  if (!garden) {                     // flat-lay keeps only the two panel-mount rails
+    for (const s of [0.30, 0.72]) {                                // horizontal cross-rails on the panel back
+      const pL = new THREE.Vector3(-RAILX, Pb.y, Pb.z).lerp(new THREE.Vector3(-RAILX, Pt.y, Pt.z), s).add(bo);
+      const pR = new THREE.Vector3( RAILX, Pb.y, Pb.z).lerp(new THREE.Vector3( RAILX, Pt.y, Pt.z), s).add(bo);
+      reg(flatBeam(pL, pR, n, 0.03, 0.025, metal), pL.clone().lerp(pR, 0.5));
+    }
+    {                                                              // rear tie between the columns
+      const tz = vertical ? (Pt.z + bo.z) : Pt.z;
+      const rL = new THREE.Vector3(-RAILX, Pt.y / 4, tz), rR = new THREE.Vector3(RAILX, Pt.y / 4, tz);
+      reg(makeBeam(rL, rR, 0.025, 0.025, metalDark), rL.clone().lerp(rR, 0.5));
+    }
+  }
+
+  if (garden) {
+    // sit on the ground on the opposite edge, but keep the panel facing the SAME way as the balcony (no flip)
+    const qTilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), GARDEN_ROT);
+    const qYaw  = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+    unit.quaternion.copy(qYaw.multiply(qTilt));   // tilt onto the opposite edge, then yaw 180° to face the viewer
+    unit.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(unit);
+    unit.position.y = -box.min.y;
+  } else {
+    // keep the balcony in a FIXED spot in both modes; shift the panel + mount so its hooks reach it
+    const dy = FIXED_RAILY - railY, dz = FIXED_RAILZ - railZ;
+    for (const grp of [tilt, frame, labelGroup]) { grp.position.y += dy; grp.position.z += dz; }
+    lastRailY = FIXED_RAILY; lastRailZ = FIXED_RAILZ;
+  }
+
+  return unit;
+}
+
+// Flat-lay footprint of one panel: the laminate is turned landscape, so its LONG
+// edge (H) runs along x and its SHORT edge (W) along z. Use the panel size itself
+// rather than the unit's bounding box, so the extended rails don't inflate the pitch.
+const GARDEN_SPAN_X = H;   // 1.761 m — long side, runs along x
+const GARDEN_SPAN_Z = W;   // 1.133 m — short side, runs along z
+
+// active plot size: garden, rooftop and facade keep their own width (and length where relevant)
+function plotW() { return sceneMode === 'rooftop' ? roofWidth : sceneMode === 'facade' ? facadeWidth : gardenWidth; }
+function plotL() { return sceneMode === 'rooftop' ? roofLength : gardenLength; }
+// facade capacity: a single centred row of vertical (portrait) panels across the wall width
+function facadePerRow() { return Math.max(1, Math.floor((facadeWidth + PANEL_GAP) / (W + PANEL_GAP))); }
+
+// garden/roof grid capacity: panels per row across the width, and rows down the length
+function gardenGrid() {
+  const perRow = Math.max(1, Math.floor((plotW() + GARDEN_ROW_GAP) / (GARDEN_SPAN_X + GARDEN_ROW_GAP)));
+  const rows   = Math.max(1, Math.floor((plotL() + GARDEN_ROW_GAP) / (GARDEN_SPAN_Z + GARDEN_ROW_GAP)));
+  return { perRow, rows };
+}
+
+// rooftop building: brick-red walls + windows + a 0.5 m parapet curb around the roof edge
+function buildRoofBuilding(cx, cz, w, l) {
+  const g = new THREE.Group(); g.name = 'roofBuilding'; g.position.set(cx, 0, cz);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, ROOF_HEIGHT, l), brickMat);
+  body.position.y = ROOF_HEIGHT / 2; body.receiveShadow = true; g.add(body);
+  // parapet curb (0.5 m) on the four roof edges
+  const pH = 0.5, pT = 0.15, yP = ROOF_HEIGHT + pH / 2;
+  const curb = (sx, sz, x, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(sx, pH, sz), parapetMat); m.position.set(x, yP, z); g.add(m); };
+  curb(w, pT, 0,  l / 2 - pT / 2); curb(w, pT, 0, -l / 2 + pT / 2);   // front / back
+  curb(pT, l, w / 2 - pT / 2, 0);  curb(pT, l, -w / 2 + pT / 2, 0);   // right / left
+  // windows: a row on each wall
+  const winW = 1.1, winH = 1.4, wy = 1.5, off = 0.03;
+  const place = (len) => { const n = Math.max(1, Math.floor(len / 2.4)); const span = len - winW - 0.8;
+    return Array.from({ length: n }, (_, i) => n === 1 ? 0 : -span / 2 + i * span / (n - 1)); };
+  for (const s of [1, -1]) for (const x of place(w)) {   // front (+z) / back (-z)
+    const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), windowMat);
+    win.position.set(x, wy, s * (l / 2 + off)); if (s < 0) win.rotation.y = Math.PI; g.add(win);
+  }
+  for (const s of [1, -1]) for (const z of place(l)) {   // right (+x) / left (-x)
+    const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), windowMat);
+    win.position.set(s * (w / 2 + off), wy, z); win.rotation.y = s * Math.PI / 2; g.add(win);
+  }
+  return g;
+}
+
+// one vertical (portrait) panel for the Facade, flush-mounted facing +z (origin at panel centre)
+function buildFacadePanel() {
+  const unit = new THREE.Group();
+  const mesh = new THREE.Mesh(geo, [glassMat, edgeMat]); mesh.position.z = -D / 2;   // centre the laminate on z=0
+  const backsheet = new THREE.Mesh(new THREE.ShapeGeometry(roundedRectShape(W, H, R)), backMat);
+  backsheet.position.z = -D / 2 - 0.001;
+  unit.add(mesh, backsheet);
+  // mounting rails + standoffs behind (toggled by the Frame button)
+  const frame = new THREE.Group(); frame.name = 'frameGrp';
+  for (const fy of [-0.45, 0.45]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(W * 0.9, 0.04, 0.03), metal);
+    rail.position.set(0, fy, -D / 2 - 0.05); frame.add(rail);
+    for (const fx of [-0.4, 0.4]) {
+      const st = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.06), metal);
+      st.position.set(fx, fy, -D / 2 - 0.05); frame.add(st);
+    }
+  }
+  unit.add(frame);
+  return unit;
+}
+
+// =================== rooftop flat-lay unit ===================
+// Panel lying face-up, carried by two rails (parts 1 & 4) that run ALONG its two
+// LONG edges. Origin sits on the roof surface; the panel's long edge runs along x,
+// so the next panel butts up against the SHORT edge (offset in x).
+const RAIL_H = 0.025, RAIL_W = 0.042;        // rail cross-section: 25 mm tall x 42 mm wide
+function buildFlatUnit() {
+  const unit = new THREE.Group();
+  const S = W / 2 - RAIL_W / 2;                  // rail centreline offset from the panel centre
+  const th = panelTilted ? THREE.MathUtils.degToRad(TILT_DEG) : 0;
+  const zLow = S;                                // far rail — the panel hinges on this one
+  // Raised rail + columns track the panel: as it tilts, its near edge swings inward,
+  // so this rail moves in with it (flat: -S). That keeps the columns under the panel.
+  const zHigh = S * (1 - 2 * Math.cos(th));
+  const colH = 2 * S * Math.sin(th);             // rail top up to the panel underside
+
+  // panel — hinged on the far rail so that edge always rests on it; when tilted it
+  // pivots up until it lands flat on the two columns above the near rail.
+  const pivot = new THREE.Group();
+  pivot.position.set(0, RAIL_H, zLow);
+  pivot.rotation.x = th;
+  const lay = new THREE.Group();  lay.rotation.x = -Math.PI / 2;
+  const land = new THREE.Group(); land.rotation.z = -Math.PI / 2;
+  const mesh = new THREE.Mesh(geo, [glassMat, edgeMat]);
+  mesh.position.z = -D / 2;                                        // centre the laminate on z = 0
+  mesh.castShadow = mesh.receiveShadow = true;
+  const backsheet = new THREE.Mesh(new THREE.ShapeGeometry(roundedRectShape(W, H, R)), backMat);
+  backsheet.position.z = -D / 2 - 0.001;
+  land.add(mesh, backsheet); lay.add(land);
+  lay.position.set(0, D / 2, -S);                // underside on the pivot plane, centred over the rails
+  pivot.add(lay); unit.add(pivot);
+
+  // the two rails, flush with the long edges and running past the short edges
+  const frame = new THREE.Group(); frame.name = 'frameGrp';
+  const labelGroup = new THREE.Group(); labelGroup.name = 'labelGrp';
+  const railLen = H + 2 * RAIL_EXT;
+  let partNo = 0;
+  for (const z of [zLow, zHigh]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(railLen, RAIL_H, RAIL_W), metal);
+    rail.position.set(0, RAIL_H / 2, z);
+    rail.castShadow = rail.receiveShadow = true;
+    frame.add(rail);
+    labelGroup.add(numberSprite(new THREE.Vector3(0, RAIL_H + 0.05, z), String(++partNo)));
+  }
+  // two columns standing on the raised rail — same 42 x 25 mm section as the rail.
+  // The head is mitred to the tilt angle so its top face lies flat against the
+  // panel underside along its full width (touching, no wedge gap).
+  if (panelTilted) {
+    const colGeo = new THREE.BoxGeometry(RAIL_H, colH, RAIL_W);
+    const vp = colGeo.attributes.position;
+    for (let i = 0; i < vp.count; i++) {
+      if (vp.getY(i) > 0) vp.setY(i, vp.getY(i) - vp.getZ(i) * Math.tan(th));   // rake the top face
+    }
+    vp.needsUpdate = true; colGeo.computeVertexNormals();
+    for (const sx of [-1, 1]) {
+      const x = sx * (H / 2 - 0.12);
+      const col = new THREE.Mesh(colGeo, metal);
+      col.position.set(x, RAIL_H + colH / 2, zHigh);      // base on the rail, head on the panel
+      col.castShadow = col.receiveShadow = true;
+      frame.add(col);
+      labelGroup.add(numberSprite(new THREE.Vector3(x, RAIL_H + colH + 0.05, zHigh), String(++partNo)));
+    }
+  }
+  unit.add(frame, labelGroup);
+  return unit;
+}
+
+// small grass tufts around the garden lawn edge
+const grassBladeGeo = new THREE.ConeGeometry(0.02, 0.17, 4);
+function buildGrassEdges(w, l) {
+  const g = new THREE.Group(); g.name = 'gardenGrass';
+  const tuft = (x, z) => {
+    const t = new THREE.Group(); t.position.set(x, 0, z);
+    const n = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < n; i++) {
+      const b = new THREE.Mesh(grassBladeGeo, grassMat);
+      b.position.set((Math.random() - 0.5) * 0.07, 0.08, (Math.random() - 0.5) * 0.07);
+      b.rotation.set((Math.random() - 0.5) * 0.5, Math.random() * Math.PI, (Math.random() - 0.5) * 0.5);
+      b.scale.y = 0.7 + Math.random() * 0.8;
+      t.add(b);
+    }
+    g.add(t);
+  };
+  const step = 0.4;
+  for (let x = -w / 2; x <= w / 2 + 1e-6; x += step) { tuft(x, -l / 2); tuft(x, l / 2); }
+  for (let z = -l / 2 + step; z < l / 2 - 1e-6; z += step) { tuft(-w / 2, z); tuft(w / 2, z); }
+  return g;
+}
+// largest number of panels the current setting can hold
+function maxPanels() {
+  if (sceneMode === 'facade') return facadePerRow();
+  if (sceneMode !== 'balcony') { const g = gardenGrid(); return g.perRow * g.rows; }
+  return Math.max(1, Math.floor((balconyLen + PANEL_GAP) / (H + PANEL_GAP)));
+}
+
+// =================== lay N panel units along the balcony, then build the balcony ===================
+function buildAssembly(mode) {
+  const assembly = new THREE.Group();
+  scene.add(assembly);
+  const N = panelCount = Math.max(1, Math.min(panelCount, maxPanels()));   // clamp to what fits
+  const base = (mode === 'facade') ? buildFacadePanel()
+             : (mode === 'garden' || mode === 'rooftop') ? buildFlatUnit()
+             : buildPanelUnit(mode);
+
+  if (mode === 'facade') {
+    // vertical panels flush on a light-blue wall, single centred row (1st panel in the middle)
+    const stepX = W + PANEL_GAP, total = N * W + (N - 1) * PANEL_GAP, x0 = -total / 2 + W / 2;
+    const yMid = FACADE_WALL_H / 2;
+    for (let i = 0; i < N; i++) {
+      const u = (i === 0) ? base : base.clone(true);
+      u.position.set(x0 + i * stepX, yMid, 0);      // panels stand off the wall front (z ≈ 0)
+      assembly.add(u);
+    }
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(facadeWidth, FACADE_WALL_H, 0.2), facadeWallMat);
+    wall.position.set(0, FACADE_WALL_H / 2, -0.18);  // front face ~8 cm behind the panels
+    wall.receiveShadow = true; wall.name = 'facadeWall';
+    assembly.add(wall);
+  } else if (mode === 'garden' || mode === 'rooftop') {
+    // Panels butt up against each other SHORT edge to short edge (a 10 cm gap in x
+    // that the long-edge rails run through); when a row fills the roof width, wrap
+    // to a new row behind it.
+    const onRoof = (mode === 'rooftop');
+    const yLift = onRoof ? ROOF_HEIGHT : 0;          // rooftop lifts the array onto the building
+    const dropY = base.position.y;                   // unit origin sits on the surface
+    const { perRow } = gardenGrid();
+    const rowsUsed = Math.ceil(N / perRow);
+    const stepX = GARDEN_SPAN_X + GARDEN_ROW_GAP, stepZ = GARDEN_SPAN_Z + GARDEN_ROW_GAP;
+    const gridD = rowsUsed * GARDEN_SPAN_Z + (rowsUsed - 1) * GARDEN_ROW_GAP;
+    const z0 = -gridD / 2 + GARDEN_SPAN_Z / 2;
+    for (let i = 0; i < N; i++) {
+      const row = Math.floor(i / perRow), col = i % perRow;
+      const inRow = (row < rowsUsed - 1) ? perRow : (N - perRow * (rowsUsed - 1));
+      const rowW = inRow * GARDEN_SPAN_X + (inRow - 1) * GARDEN_ROW_GAP;
+      const x0 = -rowW / 2 + GARDEN_SPAN_X / 2;
+      const u = (i === 0) ? base : base.clone(true);
+      u.position.x = x0 + col * stepX;               // next panel sits at the short edge (+x)
+      u.position.z = z0 + row * stepZ;
+      u.position.y = dropY + yLift;                  // on the ground, or on the roof
+      assembly.add(u);
+    }
+    const fb = new THREE.Box3().setFromObject(assembly);
+    const cx = (fb.min.x + fb.max.x) / 2, cz = (fb.min.z + fb.max.z) / 2;
+    if (onRoof) {
+      assembly.add(buildRoofBuilding(cx, cz, plotW(), plotL()));   // brick building, panels on the roof
+    } else {
+      // lawn sized to the garden plot, centred on the array
+      const gg = new THREE.Mesh(new THREE.PlaneGeometry(plotW(), plotL()), gardenGroundMat);
+      gg.rotation.x = -Math.PI / 2; gg.receiveShadow = true; gg.name = 'gardenGround';
+      gg.position.set(cx, 0, cz);
+      assembly.add(gg);
+      const grass = buildGrassEdges(plotW(), plotL());   // small grass tufts along the lawn edges
+      grass.position.set(cx, 0, cz); assembly.add(grass);
+    }
+  } else {
+    const pitch = H + PANEL_GAP, total = N * H + (N - 1) * PANEL_GAP, x0 = -total / 2 + H / 2;
+    for (let i = 0; i < N; i++) {
+      const u = (i === 0) ? base : base.clone(true);
+      u.position.x = x0 + i * pitch;                 // centred row along the balcony (x)
+      assembly.add(u);
+    }
+    buildBalcony(assembly, FIXED_RAILY, FIXED_RAILZ);
+  }
+  return { assembly };
+}
+
+// toggle mount frames / number labels across ALL panel units
+function setFrameVisible(v)  { current.assembly.traverse(o => { if (o.name === 'frameGrp') o.visible = v; }); }
+function setLabelsVisible(v) { current.assembly.traverse(o => { if (o.name === 'labelGrp') o.visible = v; }); }
+
+let sceneMode = 'rooftop', orient = 'tilted', frameVisible = true, labelsVisible = true;  // rooftop-only build: frame + labels on
+// scene: 'balcony' (tilted|vertical), 'garden', or 'rooftop'.  effMode() = what the builder gets.
+function effMode() { return sceneMode === 'balcony' ? orient : sceneMode; }
+let current = buildAssembly(effMode());
+setLabelsVisible(labelsVisible);   // rooftop build: labels shown by default
+
+// ---- auto-rotate toggle ----
+let spinning = false;
+const spinBtn = document.getElementById('spin');
+spinBtn.onclick = () => {
+  spinning = !spinning;
+  spinBtn.textContent = (spinning ? '⏸' : '▶') + ' Auto-rotate';
+};
+controls.addEventListener('start', () => { if (spinning) { spinning = false; spinBtn.textContent = '▶ Auto-rotate'; } });
+
+// ---- frame show/hide toggle ----
+const frameBtn = document.getElementById('frameBtn');
+frameBtn.onclick = () => {
+  frameVisible = !frameVisible;
+  setFrameVisible(frameVisible);
+  frameBtn.textContent = (frameVisible ? '☑' : '☐') + ' Frame';
+};
+
+const labelBtn = document.getElementById('labelBtn');
+labelBtn.onclick = () => {
+  labelsVisible = !labelsVisible;
+  setLabelsVisible(labelsVisible);
+  labelBtn.textContent = (labelsVisible ? '☑' : '☐') + ' Labels';
+};
+
+// ---- building (wall + floor + railing) show/hide toggle ----
+const bldgBtn = document.getElementById('bldgBtn');
+bldgBtn.onclick = () => {
+  buildingVisible = !buildingVisible;
+  const b = current.assembly.getObjectByName('balcony');
+  if (b) b.visible = buildingVisible;
+  bldgBtn.textContent = (buildingVisible ? '☑' : '☐') + ' Building';
+};
+
+// ---- panel type toggle (swaps the cell face texture) ----
+const typeBtn = document.getElementById('typeBtn');
+function setPanelType(type) {
+  panelType = type;
+  const t = makeCellTexture(panelType);
+  t.colorSpace = THREE.SRGBColorSpace; t.repeat.set(1 / W, 1 / H); t.offset.set(0.5, 0.5);
+  cellTex.dispose(); cellTex = t;
+  glassMat.map = t; glassMat.needsUpdate = true;
+  setBacksheetColor();                               // white back for classic, dark for all-black
+  typeBtn.textContent = (panelType === 'black') ? '◧ All-black' : '◨ Classic';
+}
+typeBtn.onclick = () => setPanelType(panelType === 'black' ? 'classic' : 'black');
+
+// ---- balcony railing type toggle (rebuilds the balcony) ----
+const railBtn = document.getElementById('railBtn');
+railBtn.onclick = () => {
+  balconyType = (balconyType === 'baluster') ? 'glass' : 'baluster';
+  rebuildBalcony();
+  railBtn.textContent = (balconyType === 'baluster') ? '▥ Bar railing' : '▢ Glass railing';
+};
+
+// ---- scene toggle: Balcony <-> Garden ----
+const sceneBtn = document.getElementById('sceneBtn');
+const modeBtn = document.getElementById('modeBtn');
+const SCENE_ORDER = ['rooftop'];   // rooftop-only build: nothing to cycle to
+const SCENE_LABEL = { balcony: '▤ Balcony', garden: '⛰ Garden', rooftop: '▦ Rooftop', facade: '▥ Facade' };
+function setScene(mode) {
+  sceneMode = mode;
+  rebuildAll();
+  sceneBtn.textContent = SCENE_LABEL[sceneMode];
+  sceneBtn.classList.toggle('btn-on', sceneMode !== 'balcony');
+  const notBalcony = (sceneMode !== 'balcony');   // tilt/vertical, building & railing apply only on the balcony
+  modeBtn.disabled = notBalcony; bldgBtn.disabled = notBalcony; railBtn.disabled = notBalcony;
+  document.getElementById('balconyCtrls').style.display = notBalcony ? 'none' : 'flex';
+  document.getElementById('gardenCtrls').style.display  = notBalcony ? 'flex' : 'none';
+  const plotLbl = sceneMode === 'rooftop' ? 'Roof' : sceneMode === 'facade' ? 'Wall' : 'Garden';
+  document.getElementById('gwLbl').textContent = plotLbl;
+  document.getElementById('glLbl').textContent = plotLbl;
+  document.getElementById('glField').style.display = (sceneMode === 'facade') ? 'none' : 'flex';   // facade: width only
+  if (notBalcony) {
+    gwSlider.value = plotW(); gwOut.textContent = plotW().toFixed(1);
+    glSlider.value = plotL(); glOut.textContent = plotL().toFixed(1);
+  }
+  frameScene();
+  updatePcUI();
+}
+sceneBtn.onclick = () => setScene(SCENE_ORDER[(SCENE_ORDER.indexOf(sceneMode) + 1) % SCENE_ORDER.length]);
+
+// ---- orientation toggle (Balcony only): Tilted <-> Vertical ----
+modeBtn.onclick = () => {
+  if (sceneMode === 'garden') return;
+  orient = (orient === 'tilted') ? 'vertical' : 'tilted';
+  rebuildAll();
+  modeBtn.textContent = (orient === 'tilted') ? '◹ Tilted' : '▯ Vertical';
+};
+
+// place the camera at a precise azimuth/elevation (used by the reference-render helper)
+function setView(azDeg, elDeg, dist) {
+  const off = new THREE.Vector3().setFromSpherical(
+    new THREE.Spherical(dist, THREE.MathUtils.degToRad(90 - elDeg), THREE.MathUtils.degToRad(azDeg)));
+  camera.position.copy(controls.target).add(off);
+  controls.update();
+  syncZoom();
+}
+// distance needed to keep the whole array in frame
+function fitDistance() {
+  if (sceneMode === 'balcony') {
+    const span = panelCount * H + (panelCount - 1) * PANEL_GAP;   // panel row width along the balcony
+    return Math.max(5.6, 2.4 + span);
+  }
+  const s = new THREE.Box3().setFromObject(current.assembly).getSize(new THREE.Vector3());
+  return Math.max(5.6, Math.max(s.x, s.y, s.z) * 1.1 + 1.5);
+}
+// dolly OUT to fit (keeps the current viewing angle; never zooms in on the user)
+function dollyToFit() {
+  const off = camera.position.clone().sub(controls.target), need = fitDistance();
+  if (off.length() < need) { off.setLength(need); camera.position.copy(controls.target).add(off); controls.update(); }
+  syncZoom();
+}
+// frame the camera to suit the current scene
+function frameScene() {
+  if (sceneMode === 'balcony') { controls.target.set(0, 0.5, 0); setView(40, 12, fitDistance()); return; }
+  const box = new THREE.Box3().setFromObject(current.assembly);
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  controls.target.copy(c);
+  if (sceneMode === 'facade') setView(22, 6, Math.max(s.x, s.y) * 1.15 + s.z + 1);   // near head-on
+  else setView(40, sceneMode === 'rooftop' ? 22 : 18, Math.max(s.x, s.z) * 1.15 + s.y);
+}
+// open framed on the balcony
+frameScene();
+
+// isolated reference render of just the panel + mount (used as a style reference for AI compositing)
+window.__refShot = (azDeg = 35, elDeg = 12, dist = 2.4, W = 1200, H = 820) => {
+  const balcony = current.assembly.getObjectByName('balcony');
+  const prevSize = new THREE.Vector2(); renderer.getSize(prevSize);
+  const prevRatio = renderer.getPixelRatio(), prevAspect = camera.aspect;
+  const prev = { bg: scene.background, ground: ground.visible, balcony: balcony ? balcony.visible : null,
+                 labels: labelsVisible, tx: controls.target.clone(),
+                 pos: camera.position.clone() };
+  scene.background = makeGradient('#f2f2f2', '#dadde0');     // clean neutral studio backdrop
+  ground.visible = false; if (balcony) balcony.visible = false;
+  setLabelsVisible(false);
+  renderer.setPixelRatio(1); renderer.setSize(W, H, false);  // fixed render size, independent of the window
+  camera.aspect = W / H; camera.updateProjectionMatrix();
+  controls.target.set(0, 0.46, 0); setView(azDeg, elDeg, dist);
+  renderer.render(scene, camera);
+  const url = renderer.domElement.toDataURL('image/jpeg', 0.9);
+  scene.background = prev.bg; ground.visible = prev.ground; if (balcony) balcony.visible = prev.balcony;
+  setLabelsVisible(prev.labels);
+  if (prevSize.x > 0 && prevSize.y > 0) {                    // restore the live view if it had a real size
+    renderer.setPixelRatio(prevRatio); renderer.setSize(prevSize.x, prevSize.y, false);
+    camera.aspect = prevAspect; camera.updateProjectionMatrix();
+  }
+  controls.target.copy(prev.tx); camera.position.copy(prev.pos); controls.update();
+  return url;
+};
+
+// export the panel + mount (no balcony/floor/wall/labels) as a binary .glb for Blender/KeyShot
+window.__exportGLB = () => new Promise((resolve, reject) => {
+  const balcony = current.assembly.getObjectByName('balcony');
+  const prevB = balcony ? balcony.visible : null, prevL = labelsVisible;
+  if (balcony) balcony.visible = false;                       // exclude railing/floor/wall via onlyVisible
+  setLabelsVisible(false);                                    // exclude the numbered labels
+  const restore = () => { if (balcony) balcony.visible = prevB; setLabelsVisible(prevL); };
+  new GLTFExporter().parse(current.assembly, async (result) => {
+    restore();
+    const dataUrl = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(new Blob([result], { type: 'model/gltf-binary' })); });
+    const res = await fetch('/save?name=solvio_panel.glb', { method: 'POST', body: dataUrl });
+    resolve(await res.text());
+  }, (e) => { restore(); reject(e); }, { binary: true, onlyVisible: true });
+});
+
+// ---- live view-angle readout (updates as you orbit / auto-rotate) ----
+const angleEl = document.getElementById('angle');
+function updateAngle() {
+  // model-relative azimuth = camera orbit minus the model's own spin
+  let az = THREE.MathUtils.radToDeg(controls.getAzimuthalAngle())
+         - THREE.MathUtils.radToDeg(current.assembly.rotation.y);
+  az = ((az % 360) + 540) % 360 - 180;                       // wrap to -180°..180°
+  const el = 90 - THREE.MathUtils.radToDeg(controls.getPolarAngle());  // 0° = eye level, 90° = top-down
+  const dist = camera.position.distanceTo(controls.target);
+  const s = `Azimuth <b>${az.toFixed(0)}°</b> &nbsp;·&nbsp; Elevation <b>${el.toFixed(0)}°</b> &nbsp;·&nbsp; Dist <b>${dist.toFixed(2)} m</b>`;
+  if (s !== angleEl.dataset.s) { angleEl.innerHTML = s; angleEl.dataset.s = s; }
+}
+
+// ---- live balcony size controls (rebuild only the balcony on slider input) ----
+function disposeGroup(g) {
+  g.traverse(o => { if (o.geometry) o.geometry.dispose();
+    const m = o.material; if (m) (Array.isArray(m) ? m : [m]).forEach(x => x.dispose()); });
+}
+function rebuildBalcony() {
+  const old = current.assembly.getObjectByName('balcony');
+  if (old) { current.assembly.remove(old); disposeGroup(old); }
+  if (sceneMode === 'balcony') buildBalcony(current.assembly, lastRailY, lastRailZ);   // balcony only
+}
+function rebuildAll() {                       // full rebuild (panel count / mode changes)
+  scene.remove(current.assembly);
+  current = buildAssembly(effMode());
+  setFrameVisible(frameVisible);
+  setLabelsVisible(labelsVisible);
+}
+const lenSlider = document.getElementById('lenSlider'), depSlider = document.getElementById('depSlider');
+const lenOut = document.getElementById('lenOut'), depOut = document.getElementById('depOut');
+lenSlider.value = balconyLen;    lenOut.textContent = balconyLen.toFixed(1);
+depSlider.value = railingHeight;  depOut.textContent = railingHeight.toFixed(2);
+lenSlider.oninput = () => {
+  balconyLen = parseFloat(lenSlider.value); lenOut.textContent = balconyLen.toFixed(1);
+  rebuildBalcony();
+  if (panelCount > maxPanels()) { panelCount = maxPanels(); rebuildAll(); }   // shrink array to fit
+  updatePcUI();
+};
+depSlider.oninput = () => { railingHeight = parseFloat(depSlider.value); depOut.textContent = railingHeight.toFixed(2); rebuildBalcony(); };
+
+// ---- garden plot size (rebuilds the whole ground array) ----
+const gwSlider = document.getElementById('gwSlider'), glSlider = document.getElementById('glSlider');
+const gwOut = document.getElementById('gwOut'), glOut = document.getElementById('glOut');
+gwSlider.oninput = () => {
+  const v = parseFloat(gwSlider.value);
+  if (sceneMode === 'rooftop') roofWidth = v; else if (sceneMode === 'facade') facadeWidth = v; else gardenWidth = v;
+  gwOut.textContent = v.toFixed(1);
+  if (panelCount > maxPanels()) panelCount = maxPanels();
+  rebuildAll(); updatePcUI();
+};
+glSlider.oninput = () => {
+  const v = parseFloat(glSlider.value); if (sceneMode === 'rooftop') roofLength = v; else gardenLength = v;
+  glOut.textContent = v.toFixed(1);
+  if (panelCount > maxPanels()) panelCount = maxPanels();
+  rebuildAll(); updatePcUI();
+};
+
+// ---- panel-count control (checks the balcony can hold the count before adding) ----
+const pcOut = document.getElementById('pcOut');
+const pcMinus = document.getElementById('pcMinus'), pcPlus = document.getElementById('pcPlus');
+const pcMsg = document.getElementById('pcMsg');
+function updatePcUI() {
+  pcOut.textContent = panelCount;
+  pcMinus.disabled = panelCount <= 1;
+  pcPlus.disabled = panelCount >= maxPanels();
+  pcMsg.textContent = pcPlus.disabled ? 'full' : '';
+}
+function setPanelCount(n) {
+  panelCount = Math.max(1, Math.min(maxPanels(), Math.round(n) || 1));
+  rebuildAll(); updatePcUI(); dollyToFit();   // zoom out so the panels stay in frame
+}
+pcPlus.onclick  = () => { if (panelCount < maxPanels()) setPanelCount(panelCount + 1); };
+pcMinus.onclick = () => { if (panelCount > 1)           setPanelCount(panelCount - 1); };
+updatePcUI();
+
+// ---- tilt toggle: lay the panel flat, or raise one long edge onto two columns ----
+const tiltBtn = document.getElementById('tiltBtn');
+tiltBtn.onclick = () => {
+  panelTilted = !panelTilted;
+  rebuildAll();
+  tiltBtn.textContent = panelTilted ? `◹ Tilt ${TILT_DEG}°` : '▭ Flat';
+  tiltBtn.classList.toggle('btn-on', panelTilted);
+};
+
+// ---- zoom in / out buttons (same eased zoom the mouse wheel drives) ----
+function zoomBy(f) {
+  const base = zooming ? zoomTarget : camera.position.distanceTo(controls.target);
+  zoomTarget = THREE.MathUtils.clamp(base * f, controls.minDistance, controls.maxDistance);
+  zooming = true;
+}
+document.getElementById('zoomIn').onclick  = () => zoomBy(0.80);
+document.getElementById('zoomOut').onclick = () => zoomBy(1.25);
+
+// rooftop-only build: sync the slider labels/values, control groups and camera framing
+setScene('rooftop');
+
+// ---- external control API: let an embedding page (the configurator) drive the model ----
+// balcony configurator ids -> 3D scene ids (flat roof -> rooftop; white/dark -> classic/black)
+function solvioApply(cfg) {
+  if (!cfg || typeof cfg !== 'object') return;
+  // rooftop-only build: cfg.location is ignored (the scene is always the rooftop)
+  if (cfg.panel) {
+    const t = cfg.panel === 'dark' ? 'black' : cfg.panel === 'white' ? 'classic' : null;
+    if (t && t !== panelType) setPanelType(t);
+  }
+  if (typeof cfg.modules === 'number' && cfg.modules >= 1 && cfg.modules !== panelCount) setPanelCount(cfg.modules);
+}
+window.solvioSetConfig = solvioApply;
+window.addEventListener('message', (e) => {
+  const d = e.data;
+  if (d && d.type === 'solvio-config') solvioApply(d);
+});
+// tell the embedding page we're ready so it can push the current configuration
+try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'solvio-ready' }, '*'); } catch (_) {}
+
+// ---- portrait product snapshot of just the panel module (with cell grid) ----
+window.__panelSnap = (azDeg = -50, rollDeg = -15, dist = 4.4, focusY = 0, outW = 1000, outH = 1300) => {
+  const panel = new THREE.Mesh(geo, [glassMat, edgeMat]);   // geo is portrait, facing +Z, centred at origin
+  panel.rotation.y = THREE.MathUtils.degToRad(azDeg);        // turn (negative = face left)
+  panel.rotation.z = THREE.MathUtils.degToRad(rollDeg);      // in-plane roll (negative = clockwise on screen)
+  const snap = new THREE.Scene();
+  snap.background = makeGradient('#f0f0f0', '#d2d2d2');
+  snap.environment = scene.environment;
+  snap.add(panel);
+  panel.updateMatrixWorld(true);
+  const k = new THREE.DirectionalLight(0xffffff, 2.4); k.position.set(-2.2, 2.5, 3.5); snap.add(k);
+  snap.add(new THREE.AmbientLight(0xffffff, 0.45));
+  const focus = new THREE.Vector3(0, focusY, 0).applyMatrix4(panel.matrixWorld); // aim point on the panel
+  const cam = new THREE.PerspectiveCamera(30, outW / outH, 0.01, 100);
+  cam.position.set(focus.x, focus.y, dist); cam.lookAt(focus);
+  const prevSize = new THREE.Vector2(); renderer.getSize(prevSize); const pr = renderer.getPixelRatio();
+  renderer.setPixelRatio(1); renderer.setSize(outW, outH, false);
+  renderer.render(snap, cam);
+  const url = renderer.domElement.toDataURL('image/png');
+  const w = prevSize.x || app.clientWidth, h = prevSize.y || app.clientHeight;
+  renderer.setPixelRatio(pr); renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  return url;
+};
+
+// ---- back-of-panel snapshot (panel + junction boxes/cables/connectors, no mount) ----
+window.__backShot = (azDeg = 210, elDeg = 12, dist = 2.9, outW = 1300, outH = 1000) => {
+  const grp = new THREE.Group();
+  grp.add(new THREE.Mesh(geo, [glassMat, edgeMat]));
+  const bs = new THREE.Mesh(new THREE.ShapeGeometry(roundedRectShape(W, H, R)), backMat);
+  bs.position.z = -D / 2 - 0.001; grp.add(bs);
+  grp.add(buildBackComponents());
+  const snap = new THREE.Scene();
+  snap.background = makeGradient('#f0f0f0', '#d2d2d2');
+  snap.environment = scene.environment;
+  snap.add(grp);
+  const k = new THREE.DirectionalLight(0xffffff, 2.4); k.position.set(-1.5, 2.2, -3.2); snap.add(k);
+  snap.add(new THREE.AmbientLight(0xffffff, 0.5));
+  const cam = new THREE.PerspectiveCamera(32, outW / outH, 0.01, 100);
+  const off = new THREE.Vector3().setFromSpherical(
+    new THREE.Spherical(dist, THREE.MathUtils.degToRad(90 - elDeg), THREE.MathUtils.degToRad(azDeg)));
+  cam.position.copy(off); cam.lookAt(0, 0, 0);
+  const prevSize = new THREE.Vector2(); renderer.getSize(prevSize); const pr = renderer.getPixelRatio();
+  renderer.setPixelRatio(1); renderer.setSize(outW, outH, false);
+  renderer.render(snap, cam);
+  const url = renderer.domElement.toDataURL('image/jpeg', 0.88);
+  const w = prevSize.x || app.clientWidth, h = prevSize.y || app.clientHeight;
+  renderer.setPixelRatio(pr); renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  return url;
+};
+
+window.__render = () => renderer.render(scene, camera);   // force a redraw (for off-screen capture)
+
+// ---- loop ----
+function animate() {
+  requestAnimationFrame(animate);
+  if (spinning) current.assembly.rotation.y += 0.0035;
+  controls.update();
+  if (zooming) {
+    const off = camera.position.clone().sub(controls.target);
+    const cur = off.length();
+    const diff = zoomTarget - cur;
+    if (Math.abs(diff) < 0.003) { off.setLength(zoomTarget); zooming = false; }
+    else off.setLength(cur + diff * 0.18);
+    camera.position.copy(controls.target).add(off);
+  }
+  updateAngle();
+  renderer.render(scene, camera);
+}
+animate();
+
+const onResize = () => {
+  syncBarOffset();
+  camera.aspect = app.clientWidth/app.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(app.clientWidth, app.clientHeight);
+};
+addEventListener('resize', onResize);
+// The bar height also changes when its contents wrap (e.g. scene switch swaps
+// slider groups) without a window resize — watch it directly.
+new ResizeObserver(onResize).observe(bctrlEl);
+
+// =================== helpers ===================
+function roundedRectShape(w, h, r) {
+  const s = new THREE.Shape();
+  const x = -w/2, y = -h/2;
+  s.moveTo(x + r, y);
+  s.lineTo(x + w - r, y);
+  s.quadraticCurveTo(x + w, y, x + w, y + r);
+  s.lineTo(x + w, y + h - r);
+  s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  s.lineTo(x + r, y + h);
+  s.quadraticCurveTo(x, y + h, x, y + h - r);
+  s.lineTo(x, y + r);
+  s.quadraticCurveTo(x, y, x + r, y);
+  return s;
+}
+
+function makeGradient(top, bottom, stops) {
+  const c = document.createElement('canvas');
+  c.width = 4; c.height = 512;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 512);
+  if (stops) { stops.forEach(([pos, col]) => grad.addColorStop(pos, col)); }
+  else { grad.addColorStop(0, top); grad.addColorStop(1, bottom); }
+  g.fillStyle = grad; g.fillRect(0, 0, 4, 512);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function makeOutdoorEnvMap() {
+  // Equirectangular (2:1) outdoor sky texture for PMREM
+  const w = 1024, h = 512;
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  // Sky top → horizon → ground
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0,    '#2b6ea6');
+  grad.addColorStop(0.38, '#6aade0');
+  grad.addColorStop(0.50, '#c2daf0');
+  grad.addColorStop(0.52, '#8aaa65');
+  grad.addColorStop(0.75, '#6b8a4e');
+  grad.addColorStop(1,    '#4a6035');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+  // Sun glow (upper quarter, left of center)
+  const sx = w * 0.28, sy = h * 0.30;
+  const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, 80);
+  sg.addColorStop(0,   'rgba(255,252,220,1)');
+  sg.addColorStop(0.15,'rgba(255,240,180,0.85)');
+  sg.addColorStop(0.45,'rgba(255,220,140,0.30)');
+  sg.addColorStop(1,   'rgba(255,200,100,0)');
+  ctx.fillStyle = sg; ctx.fillRect(0, 0, w, h);
+  // Horizon brightness band
+  const hg = ctx.createLinearGradient(0, h * 0.44, 0, h * 0.56);
+  hg.addColorStop(0, 'rgba(255,255,255,0)');
+  hg.addColorStop(0.5,'rgba(220,235,248,0.55)');
+  hg.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = hg; ctx.fillRect(0, 0, w, h);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  return t;
+}
+
+function makeGrassMap() {
+  const sz = 512;
+  const cv = document.createElement('canvas'); cv.width = cv.height = sz;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#5a7c3c'; ctx.fillRect(0, 0, sz, sz);
+  // large tonal patches — real lawns have colour variation
+  for (let i = 0; i < 900; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    const r = Math.random() * 28 + 5;
+    ctx.fillStyle = Math.random() > 0.5 ? `rgba(100,150,45,${0.25+Math.random()*0.30})` : `rgba(28,55,12,${0.18+Math.random()*0.25})`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // fine blade streaks
+  ctx.strokeStyle = 'rgba(55,90,25,0.25)'; ctx.lineWidth = 1;
+  for (let i = 0; i < 500; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    const len = Math.random() * 18 + 3;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (Math.random()-0.5)*5, y - len); ctx.stroke();
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(8, 8);
+  return t;
+}
+
+function makeBrickMap() {
+  const sz = 512, bCols = 5, bRows = 9;
+  const cv = document.createElement('canvas'); cv.width = sz; cv.height = sz;
+  const ctx = cv.getContext('2d');
+  // mortar background
+  ctx.fillStyle = '#b2a898'; ctx.fillRect(0, 0, sz, sz);
+  const bW = sz / bCols, bH = sz / bRows;
+  const mH = bH * 0.10, mV = bW * 0.055;
+  for (let r = 0; r < bRows; r++) {
+    const ox = (r % 2) * bW * 0.5;
+    for (let c = -1; c < bCols + 1; c++) {
+      const x = c * bW + ox + mV * 0.5;
+      const y = r * bH + mH * 0.5;
+      const w = bW - mV, h = bH - mH;
+      // per-brick color variation using deterministic noise
+      const v = (Math.sin(r * 5.1 + c * 8.7) * 0.5 + Math.sin(r * 2.3 + c * 3.1) * 0.25 + 0.5);
+      const dr = Math.floor(v * 28) - 14;
+      ctx.fillStyle = `rgb(${158+dr},${59+Math.floor(dr*0.5)},${49+Math.floor(dr*0.4)})`;
+      ctx.fillRect(Math.max(0, x), y, Math.min(w, sz - Math.max(0, x)), h);
+      // subtle top-edge highlight (like ambient occlusion on mortar shadow)
+      ctx.fillStyle = 'rgba(255,255,255,0.07)';
+      ctx.fillRect(Math.max(0, x), y, Math.min(w, sz - Math.max(0, x)), h * 0.18);
+      // fine surface grain
+      for (let i = 0; i < 18; i++) {
+        ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.06})`;
+        ctx.fillRect(Math.max(0, x) + Math.random() * w, y + Math.random() * h, Math.random() * 4 + 1, Math.random() * 3 + 1);
+      }
+    }
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(5, 6);
+  return t;
+}
+
+function makeConcreteMap(light = false) {
+  const sz = 512;
+  const cv = document.createElement('canvas'); cv.width = cv.height = sz;
+  const ctx = cv.getContext('2d');
+  const base = light ? '#c8c2b5' : '#c0bab0';
+  ctx.fillStyle = base; ctx.fillRect(0, 0, sz, sz);
+  // large coarse aggregate variation
+  for (let i = 0; i < 220; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    const r = Math.random() * 7 + 2;
+    const v = Math.random();
+    ctx.fillStyle = v > 0.6 ? `rgba(255,255,240,${0.10+Math.random()*0.15})` : `rgba(0,0,0,${0.08+Math.random()*0.14})`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // fine grain speckle
+  for (let i = 0; i < 4000; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.11)';
+    ctx.fillRect(x, y, Math.random() * 2 + 0.5, Math.random() * 2 + 0.5);
+  }
+  // visible expansion/form-tie joints
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 2;
+  for (let i = 1; i < 4; i++) {
+    const p = i / 4 * sz;
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, sz); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(sz, p); ctx.stroke();
+  }
+  // slightly lighter highlight along joint edges
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const p = i / 4 * sz + 2;
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, sz); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(sz, p); ctx.stroke();
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(4, 3);
+  return t;
+}
+
+function makeStuccoMap() {
+  const sz = 512;
+  const cv = document.createElement('canvas'); cv.width = cv.height = sz;
+  const ctx = cv.getContext('2d');
+  // warm cream/sand plaster — typical Mediterranean exterior wall
+  ctx.fillStyle = '#e8e0d0'; ctx.fillRect(0, 0, sz, sz); // warm cream — like the building in image 2
+  // very fine plaster grain — tiny specks only, no big blobs
+  for (let i = 0; i < 8000; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    const r = Math.random() * 1.6 + 0.3;
+    ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,248,228,0.12)' : 'rgba(100,85,55,0.09)';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // small pebble inclusions — subtle, max 4px
+  for (let i = 0; i < 250; i++) {
+    const x = Math.random() * sz, y = Math.random() * sz;
+    const r = Math.random() * 3 + 0.8;
+    ctx.fillStyle = Math.random() > 0.5 ? `rgba(210,195,160,${0.10+Math.random()*0.12})` : `rgba(80,65,40,${0.07+Math.random()*0.10})`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(4, 3);
+  return t;
+}
+
+// panel face texture: 6 columns x 16 rows of half-cut cells, multi-busbar fingers, central ribbon gap.
+// type 'black' = all-black mono-PERC; type 'classic' = blue cells + silver grid/frame + gold Solvio badge.
+function makeCellTexture(type = 'black') {
+  const P = CELL_PALETTES[type] || CELL_PALETTES.black;
+  const cols = 6, rows = 16;
+  const px = 1400;                                   // canvas width
+  const py = Math.round(px * H / W);                 // keep face aspect
+  const cv = document.createElement('canvas');
+  cv.width = px; cv.height = py;
+  const ctx = cv.getContext('2d');
+
+  // base laminate (black, or silver-white for classic — shows as the grid + frame)
+  ctx.fillStyle = P.base;
+  ctx.fillRect(0, 0, px, py);
+
+  // active (celled) area inside the border
+  const bx = BORDER / W * px, by = BORDER / H * py;
+  const aw = px - 2*bx, ah = py - 2*by;
+
+  const gap = aw * 0.0042;          // gap between cells
+  const midGap = ah * 0.012;        // larger central ribbon gap (half-cut split)
+  const cw = (aw - (cols - 1) * gap) / cols;
+  const ch = (ah - (rows - 1) * gap - midGap) / rows;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = bx + c * (cw + gap);
+      let y = by + r * (ch + gap);
+      if (r >= rows / 2) y += midGap;               // central split
+
+      // cell body — gradient sheen
+      const grad = ctx.createLinearGradient(x, y, x + cw, y + ch);
+      grad.addColorStop(0, P.cellA);
+      grad.addColorStop(0.5, P.cellB);
+      grad.addColorStop(1, P.cellA);
+      ctx.fillStyle = grad;
+      roundRect(ctx, x, y, cw, ch, cw * 0.03);
+      ctx.fill();
+
+      // multi-busbar fingers — fine vertical lines
+      ctx.strokeStyle = P.finger;
+      ctx.lineWidth = Math.max(1, px * 0.0006);
+      const fingers = 12;
+      for (let f = 1; f < fingers; f++) {
+        const fx = x + (cw * f / fingers);
+        ctx.beginPath(); ctx.moveTo(fx, y + ch*0.04); ctx.lineTo(fx, y + ch*0.96); ctx.stroke();
+      }
+
+      // two horizontal busbar wires with solder dots
+      ctx.strokeStyle = P.bus;
+      ctx.lineWidth = Math.max(1, px * 0.0009);
+      for (const bb of [0.33, 0.67]) {
+        const yb = y + ch * bb;
+        ctx.beginPath(); ctx.moveTo(x + cw*0.03, yb); ctx.lineTo(x + cw*0.97, yb); ctx.stroke();
+      }
+
+      // corner chamfer marks (mono cell pseudo-square corners) — skipped when palette cham is null
+      if (P.cham) {
+        ctx.strokeStyle = P.cham;
+        ctx.lineWidth = Math.max(1, px * 0.0016);
+        const chm = cw * 0.10;
+        ctx.beginPath();
+        ctx.moveTo(x, y + chm); ctx.lineTo(x + chm, y);
+        ctx.moveTo(x + cw - chm, y); ctx.lineTo(x + cw, y + chm);
+        ctx.moveTo(x, y + ch - chm); ctx.lineTo(x + chm, y + ch);
+        ctx.moveTo(x + cw - chm, y + ch); ctx.lineTo(x + cw, y + ch - chm);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // faint overall vignette toward edges
+  const vg = ctx.createRadialGradient(px/2, py/2, py*0.2, px/2, py/2, py*0.75);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, P.vignette);
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, px, py);
+
+  // gold "Solvio" badge (classic type), bottom-right of the portrait face
+  if (P.badge) {
+    const bxp = px * 0.70, byp = py * 0.80, br = px * 0.078;
+    const gg = ctx.createRadialGradient(bxp - br*0.35, byp - br*0.35, br*0.1, bxp, byp, br);
+    gg.addColorStop(0, '#f4dc94'); gg.addColorStop(0.55, '#dbb659'); gg.addColorStop(1, '#a67f2e');
+    ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(bxp, byp, br, 0, Math.PI*2); ctx.fill();
+    ctx.lineWidth = px * 0.004; ctx.strokeStyle = '#c9a24a'; ctx.stroke();
+    ctx.fillStyle = '#c14425';
+    ctx.font = `600 ${Math.round(br*0.52)}px -apple-system, Segoe UI, Roboto, sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Solvio', bxp, byp);
+  }
+
+  const t = new THREE.CanvasTexture(cv);
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+</script>
+</body>
+</html>

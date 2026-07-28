@@ -88,6 +88,11 @@
     border: 1px solid rgba(0,0,0,.15); border-radius: 6px; background: rgba(255,255,255,.7); cursor: pointer;
   }
   #bctrl .pcrow button:disabled { opacity: .35; cursor: default; }
+  /* the best-fit row holds text buttons, not the +/- steppers — let them size to fit */
+  #bctrl #fitCtrl .pcrow { height: auto; flex-wrap: nowrap; }
+  #bctrl #fitCtrl .pcrow button {
+    width: auto; height: 26px; padding: 0 10px; font-size: 12px; white-space: nowrap;
+  }
   /* Reserve a fixed slot for the "full" message so the +/- row never wraps to
      a second line when it appears. */
   #bctrl #pcMsg { color: #e8392b; font-size: 12px; white-space: nowrap; min-width: 30px; }
@@ -164,7 +169,7 @@
   <label id="panelsCtrl">Panels &nbsp;<b><span id="pcOut">2</span></b>
     <span class="pcrow"><button id="pcMinus" type="button">−</button><button id="pcPlus" type="button">+</button><small id="pcMsg"></small></span></label>
   <label id="fitCtrl">Best fit &nbsp;<b><span id="fitOut">—</span></b>
-    <span class="pcrow"><button id="orientBtn" type="button">◇ Auto</button><button id="fitBtn" type="button">Fill roof</button></span></label>
+    <span class="pcrow"><button id="orientBtn" type="button">▯ Portrait</button><button id="fitBtn" type="button">Fill roof</button></span></label>
 </div>
 
 <script type="importmap">
@@ -993,7 +998,8 @@ function buildGrassEdges(w, l) {
 // fraction of a pitch often buys a whole extra row or column on a cut-up roof, so
 // try both orientations across a sweep of start offsets and keep the best.
 const PHASE_STEPS = 12;
-let orientMode = 'auto';                 // 'auto' | 'landscape' | 'portrait'
+let orientMode = 'portrait';             // 'landscape' | 'portrait' | 'angled'
+                                         // (set at startup to whichever fits more)
 
 // count the slots a given orientation + grid phase yields
 function layoutSlots(pts, spanX, spanZ, offX, offZ, bbox) {
@@ -1090,11 +1096,9 @@ function roofPlan() {
 }
 // the layout actually built: whichever orientation is selected ('auto' takes the bigger)
 function activePlan() {
+  if (orientMode === 'angled') return angledPlan();
   const p = roofPlan();
-  if (orientMode === 'landscape') return p.landscape;
-  if (orientMode === 'portrait')  return p.portrait;
-  if (orientMode === 'angled')    return angledPlan();
-  return p.portrait.slots.length > p.landscape.slots.length ? p.portrait : p.landscape;
+  return orientMode === 'landscape' ? p.landscape : p.portrait;
 }
 
 // largest number of panels the current setting can hold
@@ -1472,22 +1476,18 @@ function updatePcUI() {
       s += ` · angled ${mark(a.slots.length, true)} @ ${bearingFromSouth(a.angle)}`;
     }
     fitOut.textContent = s;
-    // Auto always resolves to whichever of the two wins — say which, so it doesn't
-    // look like a dead step in the cycle when it lands on the same one as before.
-    const ob = document.getElementById('orientBtn');
-    if (ob && orientMode === 'auto') ob.textContent = `◇ Auto · ${act.portrait ? 'portrait' : 'landscape'}`;
   } else fitOut.textContent = '—';
 }
 document.getElementById('fitBtn').onclick = () => setPanelCount(maxPanels());
 
 // ---- orientation choice: auto (whichever fits more) / force landscape / force portrait ----
-const ORIENTS = ['auto', 'landscape', 'portrait', 'angled'];
-const ORIENT_LABEL = { auto: '◇ Auto', landscape: '▭ Landscape', portrait: '▯ Portrait', angled: '◈ Angled' };
+const ORIENTS = ['landscape', 'portrait', 'angled'];
+const ORIENT_LABEL = { landscape: '▭ Landscape', portrait: '▯ Portrait', angled: '◈ Angled' };
 const orientBtn = document.getElementById('orientBtn');
 orientBtn.onclick = () => {
   orientMode = ORIENTS[(ORIENTS.indexOf(orientMode) + 1) % ORIENTS.length];
   orientBtn.textContent = ORIENT_LABEL[orientMode];
-  orientBtn.classList.toggle('btn-on', orientMode !== 'auto');
+  orientBtn.classList.toggle('btn-on', orientMode === 'angled');   // flag the off-axis option
   if (panelCount > maxPanels()) panelCount = maxPanels();
   rebuildAll(); updatePcUI();
 };
@@ -1525,6 +1525,13 @@ function zoomBy(f) {
 }
 document.getElementById('zoomIn').onclick  = () => zoomBy(0.80);
 document.getElementById('zoomOut').onclick = () => zoomBy(1.25);
+
+// open on whichever axis-aligned orientation fits more panels on this roof
+{
+  const p = roofPlan();
+  orientMode = p.portrait.slots.length > p.landscape.slots.length ? 'portrait' : 'landscape';
+  orientBtn.textContent = ORIENT_LABEL[orientMode];
+}
 
 // rooftop-only build: sync the slider labels/values, control groups and camera framing
 setScene('rooftop');

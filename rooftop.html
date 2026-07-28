@@ -164,7 +164,7 @@
   <label id="panelsCtrl">Panels &nbsp;<b><span id="pcOut">2</span></b>
     <span class="pcrow"><button id="pcMinus" type="button">−</button><button id="pcPlus" type="button">+</button><small id="pcMsg"></small></span></label>
   <label id="fitCtrl">Best fit &nbsp;<b><span id="fitOut">—</span></b>
-    <span class="pcrow"><button id="fitBtn" type="button">Fill roof</button></span></label>
+    <span class="pcrow"><button id="orientBtn" type="button">◇ Auto</button><button id="fitBtn" type="button">Fill roof</button></span></label>
 </div>
 
 <script type="importmap">
@@ -991,6 +991,7 @@ function buildGrassEdges(w, l) {
 // fraction of a pitch often buys a whole extra row or column on a cut-up roof, so
 // try both orientations across a sweep of start offsets and keep the best.
 const PHASE_STEPS = 12;
+let orientMode = 'auto';                 // 'auto' | 'landscape' | 'portrait'
 
 // count the slots a given orientation + grid phase yields
 function layoutSlots(pts, spanX, spanZ, offX, offZ, bbox) {
@@ -1003,8 +1004,30 @@ function layoutSlots(pts, spanX, spanZ, offX, offZ, bbox) {
   return slots;
 }
 
+// best grid phase for ONE orientation
+function bestForOrientation(portrait, pts, bbox) {
+  const spanX = portrait ? W : H, spanZ = portrait ? H : W;
+  const stepX = spanX + IN_ROW_GAP, stepZ = spanZ + ROW_GAP;
+  let best = [];
+  for (let i = 0; i < PHASE_STEPS; i++)
+    for (let j = 0; j < PHASE_STEPS; j++) {
+      const slots = layoutSlots(pts, spanX, spanZ, i / PHASE_STEPS * stepX, j / PHASE_STEPS * stepZ, bbox);
+      if (slots.length > best.length) best = slots;
+    }
+  // centre the winning grid in the space it actually uses, so it doesn't hug one edge
+  if (best.length) {
+    const sx = best.map(s => s.x), sz = best.map(s => s.z);
+    const dx = ((bbox.minX + bbox.maxX) - (Math.min(...sx) + Math.max(...sx))) / 2;
+    const dz = ((bbox.minZ + bbox.maxZ) - (Math.min(...sz) + Math.max(...sz))) / 2;
+    const hw = spanX / 2 + EDGE_CLEAR, hl = spanZ / 2 + EDGE_CLEAR;
+    const nudged = best.map(s => ({ x: s.x + dx, z: s.z + dz }));
+    if (nudged.every(s => rectFits(pts, s.x, s.z, hw, hl))) best = nudged;
+  }
+  return { slots: best, portrait };
+}
+
 let roofPlanCache = null;
-// Best layout for the current roof: { slots, portrait }
+// Optimised layout for BOTH orientations: { landscape, portrait }
 function roofPlan() {
   const w = plotW(), l = plotL();
   const key = JSON.stringify([roofOutline, w, l, EDGE_CLEAR, IN_ROW_GAP, ROW_GAP]);
@@ -1012,35 +1035,25 @@ function roofPlan() {
   const pts = outlineWorld(w, l);
   const xs = pts.map(p => p.x), zs = pts.map(p => p.z);
   const bbox = { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
-  let best = { slots: [], portrait: false };
-  for (const portrait of [false, true]) {
-    const spanX = portrait ? W : H, spanZ = portrait ? H : W;
-    const stepX = spanX + IN_ROW_GAP, stepZ = spanZ + ROW_GAP;
-    for (let i = 0; i < PHASE_STEPS; i++) {
-      for (let j = 0; j < PHASE_STEPS; j++) {
-        const slots = layoutSlots(pts, spanX, spanZ, i / PHASE_STEPS * stepX, j / PHASE_STEPS * stepZ, bbox);
-        if (slots.length > best.slots.length) best = { slots, portrait };
-      }
-    }
-  }
-  // centre the winning grid in the space it actually uses, so it doesn't hug one edge
-  if (best.slots.length) {
-    const sx = best.slots.map(s => s.x), sz = best.slots.map(s => s.z);
-    const spanX = best.portrait ? W : H, spanZ = best.portrait ? H : W;
-    const dx = ((bbox.minX + bbox.maxX) - (Math.min(...sx) + Math.max(...sx))) / 2;
-    const dz = ((bbox.minZ + bbox.maxZ) - (Math.min(...sz) + Math.max(...sz))) / 2;
-    const hw = spanX / 2 + EDGE_CLEAR, hl = spanZ / 2 + EDGE_CLEAR;
-    const nudged = best.slots.map(s => ({ x: s.x + dx, z: s.z + dz }));
-    if (nudged.every(s => rectFits(pts, s.x, s.z, hw, hl))) best.slots = nudged;
-  }
-  roofPlanCache = { key, ...best };
+  roofPlanCache = {
+    key,
+    landscape: bestForOrientation(false, pts, bbox),
+    portrait:  bestForOrientation(true,  pts, bbox)
+  };
   return roofPlanCache;
+}
+// the layout actually built: whichever orientation is selected ('auto' takes the bigger)
+function activePlan() {
+  const p = roofPlan();
+  if (orientMode === 'landscape') return p.landscape;
+  if (orientMode === 'portrait')  return p.portrait;
+  return p.portrait.slots.length > p.landscape.slots.length ? p.portrait : p.landscape;
 }
 
 // largest number of panels the current setting can hold
 function maxPanels() {
   if (sceneMode === 'facade') return facadePerRow();
-  if (sceneMode === 'rooftop') return Math.max(1, roofPlan().slots.length);
+  if (sceneMode === 'rooftop') return Math.max(1, activePlan().slots.length);
   if (sceneMode !== 'balcony') { const g = gardenGrid(); return g.perRow * g.rows; }
   return Math.max(1, Math.floor((balconyLen + PANEL_GAP) / (H + PANEL_GAP)));
 }
@@ -1051,7 +1064,7 @@ function buildAssembly(mode) {
   scene.add(assembly);
   const N = panelCount = Math.max(1, Math.min(panelCount, maxPanels()));   // clamp to what fits
   const base = (mode === 'facade') ? buildFacadePanel()
-             : (mode === 'rooftop') ? buildFlatUnit(roofPlan().portrait)
+             : (mode === 'rooftop') ? buildFlatUnit(activePlan().portrait)
              : (mode === 'garden') ? buildFlatUnit()
              : buildPanelUnit(mode);
 
@@ -1077,7 +1090,7 @@ function buildAssembly(mode) {
     const dropY = base.position.y;                   // unit origin sits on the surface
     if (onRoof) {
       // slots come from the optimiser: already clipped to the outline, best-fit grid
-      const slots = roofPlan().slots;
+      const slots = activePlan().slots;
       for (let i = 0; i < N; i++) {
         const s = slots[i] || { x: 0, z: 0 };
         const u = (i === 0) ? base : base.clone(true);
@@ -1394,11 +1407,25 @@ function updatePcUI() {
   pcPlus.disabled = panelCount >= maxPanels();
   pcMsg.textContent = pcPlus.disabled ? 'full' : '';
   if (sceneMode === 'rooftop') {
-    const p = roofPlan();
-    fitOut.textContent = `${p.slots.length} · ${p.portrait ? 'portrait' : 'landscape'}`;
+    const p = roofPlan(), act = activePlan();
+    const mark = (n, isAct) => isAct ? `[${n}]` : `${n}`;
+    fitOut.textContent = `landscape ${mark(p.landscape.slots.length, !act.portrait)}`
+                       + ` · portrait ${mark(p.portrait.slots.length, act.portrait)}`;
   } else fitOut.textContent = '—';
 }
 document.getElementById('fitBtn').onclick = () => setPanelCount(maxPanels());
+
+// ---- orientation choice: auto (whichever fits more) / force landscape / force portrait ----
+const ORIENTS = ['auto', 'landscape', 'portrait'];
+const ORIENT_LABEL = { auto: '◇ Auto', landscape: '▭ Landscape', portrait: '▯ Portrait' };
+const orientBtn = document.getElementById('orientBtn');
+orientBtn.onclick = () => {
+  orientMode = ORIENTS[(ORIENTS.indexOf(orientMode) + 1) % ORIENTS.length];
+  orientBtn.textContent = ORIENT_LABEL[orientMode];
+  orientBtn.classList.toggle('btn-on', orientMode !== 'auto');
+  if (panelCount > maxPanels()) panelCount = maxPanels();
+  rebuildAll(); updatePcUI();
+};
 function setPanelCount(n) {
   panelCount = Math.max(1, Math.min(maxPanels(), Math.round(n) || 1));
   rebuildAll(); updatePcUI(); dollyToFit();   // zoom out so the panels stay in frame

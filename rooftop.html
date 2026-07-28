@@ -163,6 +163,8 @@
   </span>
   <label id="panelsCtrl">Panels &nbsp;<b><span id="pcOut">2</span></b>
     <span class="pcrow"><button id="pcMinus" type="button">−</button><button id="pcPlus" type="button">+</button><small id="pcMsg"></small></span></label>
+  <label id="fitCtrl">Best fit &nbsp;<b><span id="fitOut">—</span></b>
+    <span class="pcrow"><button id="fitBtn" type="button">Fill roof</button></span></label>
 </div>
 
 <script type="importmap">
@@ -208,7 +210,7 @@ let roofWidth = 7, roofLength = 7;       // rooftop bounding box (m) — the out
 let roofOutline = [
   [1, 0], [0, 0], [0, 0.509], [0.397, 0.509], [0.397, 1], [1, 1]
 ];
-const ROOF_SETBACK = 0.30;               // keep panels this far in from the roof edge (m)
+const EDGE_CLEAR = 0.20;                 // clearance from panel to building edge (m)
 let facadeWidth = 6;                     // facade wall width (m); wall height fixed at 3 m
 const FIXED_RAILY = 0.945, FIXED_RAILZ = -0.367; // balcony stays here in both modes; panel+mount shift to hook onto it
 let buildingVisible = true; // wall + floor slab (the "building"); toggled by the Building button
@@ -896,9 +898,13 @@ function buildFacadePanel() {
 // LONG edges. Origin sits on the roof surface; the panel's long edge runs along x,
 // so the next panel butts up against the SHORT edge (offset in x).
 const RAIL_H = 0.025, RAIL_W = 0.042;        // rail cross-section: 25 mm tall x 42 mm wide
-function buildFlatUnit() {
+// portrait = long edge runs north-south (up the slope) instead of east-west.
+// Either way the rails run east-west and the tilt raises the north edge.
+function buildFlatUnit(portrait = false) {
   const unit = new THREE.Group();
-  const S = W / 2 - RAIL_W / 2;                  // rail centreline offset from the panel centre
+  const acrossX = portrait ? W : H;              // panel footprint east-west
+  const acrossZ = portrait ? H : W;              // panel footprint north-south
+  const S = acrossZ / 2 - RAIL_W / 2;            // rail centreline offset from the panel centre
   const th = panelTilted ? THREE.MathUtils.degToRad(TILT_DEG) : 0;
   const zLow = S;                                // far rail — the panel hinges on this one
   // Raised rail + columns track the panel: as it tilts, its near edge swings inward,
@@ -912,7 +918,7 @@ function buildFlatUnit() {
   pivot.position.set(0, RAIL_H, zLow);
   pivot.rotation.x = th;
   const lay = new THREE.Group();  lay.rotation.x = -Math.PI / 2;
-  const land = new THREE.Group(); land.rotation.z = -Math.PI / 2;
+  const land = new THREE.Group(); land.rotation.z = portrait ? 0 : -Math.PI / 2;
   const mesh = new THREE.Mesh(geo, [glassMat, edgeMat]);
   mesh.position.z = -D / 2;                                        // centre the laminate on z = 0
   mesh.castShadow = mesh.receiveShadow = true;
@@ -925,7 +931,7 @@ function buildFlatUnit() {
   // the two rails, flush with the long edges and running past the short edges
   const frame = new THREE.Group(); frame.name = 'frameGrp';
   const labelGroup = new THREE.Group(); labelGroup.name = 'labelGrp';
-  const railLen = H + 2 * RAIL_EXT;
+  const railLen = acrossX + 2 * RAIL_EXT;
   let partNo = 0;
   for (const z of [zLow, zHigh]) {
     const rail = new THREE.Mesh(new THREE.BoxGeometry(railLen, RAIL_H, RAIL_W), metal);
@@ -945,7 +951,7 @@ function buildFlatUnit() {
     }
     vp.needsUpdate = true; colGeo.computeVertexNormals();
     for (const sx of [-1, 1]) {
-      const x = sx * (H / 2 - 0.12);
+      const x = sx * (acrossX / 2 - 0.12);
       const col = new THREE.Mesh(colGeo, metal);
       col.position.set(x, RAIL_H + colH / 2, zHigh);      // base on the rail, head on the panel
       col.castShadow = col.receiveShadow = true;
@@ -978,27 +984,63 @@ function buildGrassEdges(w, l) {
   for (let z = -l / 2 + step; z < l / 2 - 1e-6; z += step) { tuft(-w / 2, z); tuft(w / 2, z); }
   return g;
 }
-// Grid slots whose whole panel footprint (plus edge setback) sits inside the roof
-// outline — this is what makes an L-shaped or traced roof lay out correctly.
-function roofSlots() {
-  const w = plotW(), l = plotL(), pts = outlineWorld(w, l);
-  const hw = GARDEN_SPAN_X / 2 + ROOF_SETBACK, hl = GARDEN_SPAN_Z / 2 + ROOF_SETBACK;
-  const stepX = GARDEN_SPAN_X + IN_ROW_GAP, stepZ = GARDEN_SPAN_Z + ROW_GAP;
-  const nx = Math.max(1, Math.floor((w + IN_ROW_GAP) / stepX));
-  const nz = Math.max(1, Math.floor((l + ROW_GAP) / stepZ));
-  const x0 = -(nx - 1) * stepX / 2, z0 = -(nz - 1) * stepZ / 2;
+// ---- layout optimiser -----------------------------------------------------
+// Spacing rules are fixed: 10 cm between panels within a row, 40 cm between rows,
+// and EDGE_CLEAR from the building edge. What is free is (a) whether panels are
+// laid landscape or portrait and (b) where the grid starts. Sliding the grid by a
+// fraction of a pitch often buys a whole extra row or column on a cut-up roof, so
+// try both orientations across a sweep of start offsets and keep the best.
+const PHASE_STEPS = 12;
+
+// count the slots a given orientation + grid phase yields
+function layoutSlots(pts, spanX, spanZ, offX, offZ, bbox) {
+  const hw = spanX / 2 + EDGE_CLEAR, hl = spanZ / 2 + EDGE_CLEAR;
+  const stepX = spanX + IN_ROW_GAP, stepZ = spanZ + ROW_GAP;
   const slots = [];
-  for (let r = 0; r < nz; r++) for (let c = 0; c < nx; c++) {
-    const x = x0 + c * stepX, z = z0 + r * stepZ;
-    if (rectFits(pts, x, z, hw, hl)) slots.push({ x, z });
-  }
+  for (let z = bbox.minZ + hl + offZ; z <= bbox.maxZ - hl + 1e-6; z += stepZ)
+    for (let x = bbox.minX + hw + offX; x <= bbox.maxX - hw + 1e-6; x += stepX)
+      if (rectFits(pts, x, z, hw, hl)) slots.push({ x, z });
   return slots;
+}
+
+let roofPlanCache = null;
+// Best layout for the current roof: { slots, portrait }
+function roofPlan() {
+  const w = plotW(), l = plotL();
+  const key = JSON.stringify([roofOutline, w, l, EDGE_CLEAR, IN_ROW_GAP, ROW_GAP]);
+  if (roofPlanCache && roofPlanCache.key === key) return roofPlanCache;
+  const pts = outlineWorld(w, l);
+  const xs = pts.map(p => p.x), zs = pts.map(p => p.z);
+  const bbox = { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
+  let best = { slots: [], portrait: false };
+  for (const portrait of [false, true]) {
+    const spanX = portrait ? W : H, spanZ = portrait ? H : W;
+    const stepX = spanX + IN_ROW_GAP, stepZ = spanZ + ROW_GAP;
+    for (let i = 0; i < PHASE_STEPS; i++) {
+      for (let j = 0; j < PHASE_STEPS; j++) {
+        const slots = layoutSlots(pts, spanX, spanZ, i / PHASE_STEPS * stepX, j / PHASE_STEPS * stepZ, bbox);
+        if (slots.length > best.slots.length) best = { slots, portrait };
+      }
+    }
+  }
+  // centre the winning grid in the space it actually uses, so it doesn't hug one edge
+  if (best.slots.length) {
+    const sx = best.slots.map(s => s.x), sz = best.slots.map(s => s.z);
+    const spanX = best.portrait ? W : H, spanZ = best.portrait ? H : W;
+    const dx = ((bbox.minX + bbox.maxX) - (Math.min(...sx) + Math.max(...sx))) / 2;
+    const dz = ((bbox.minZ + bbox.maxZ) - (Math.min(...sz) + Math.max(...sz))) / 2;
+    const hw = spanX / 2 + EDGE_CLEAR, hl = spanZ / 2 + EDGE_CLEAR;
+    const nudged = best.slots.map(s => ({ x: s.x + dx, z: s.z + dz }));
+    if (nudged.every(s => rectFits(pts, s.x, s.z, hw, hl))) best.slots = nudged;
+  }
+  roofPlanCache = { key, ...best };
+  return roofPlanCache;
 }
 
 // largest number of panels the current setting can hold
 function maxPanels() {
   if (sceneMode === 'facade') return facadePerRow();
-  if (sceneMode === 'rooftop') return Math.max(1, roofSlots().length);
+  if (sceneMode === 'rooftop') return Math.max(1, roofPlan().slots.length);
   if (sceneMode !== 'balcony') { const g = gardenGrid(); return g.perRow * g.rows; }
   return Math.max(1, Math.floor((balconyLen + PANEL_GAP) / (H + PANEL_GAP)));
 }
@@ -1009,7 +1051,8 @@ function buildAssembly(mode) {
   scene.add(assembly);
   const N = panelCount = Math.max(1, Math.min(panelCount, maxPanels()));   // clamp to what fits
   const base = (mode === 'facade') ? buildFacadePanel()
-             : (mode === 'garden' || mode === 'rooftop') ? buildFlatUnit()
+             : (mode === 'rooftop') ? buildFlatUnit(roofPlan().portrait)
+             : (mode === 'garden') ? buildFlatUnit()
              : buildPanelUnit(mode);
 
   if (mode === 'facade') {
@@ -1033,8 +1076,8 @@ function buildAssembly(mode) {
     const yLift = onRoof ? ROOF_HEIGHT : 0;          // rooftop lifts the array onto the building
     const dropY = base.position.y;                   // unit origin sits on the surface
     if (onRoof) {
-      // slots are already clipped to the roof outline and share its centre
-      const slots = roofSlots();
+      // slots come from the optimiser: already clipped to the outline, best-fit grid
+      const slots = roofPlan().slots;
       for (let i = 0; i < N; i++) {
         const s = slots[i] || { x: 0, z: 0 };
         const u = (i === 0) ? base : base.clone(true);
@@ -1344,12 +1387,18 @@ glSlider.oninput = () => {
 const pcOut = document.getElementById('pcOut');
 const pcMinus = document.getElementById('pcMinus'), pcPlus = document.getElementById('pcPlus');
 const pcMsg = document.getElementById('pcMsg');
+const fitOut = document.getElementById('fitOut');
 function updatePcUI() {
   pcOut.textContent = panelCount;
   pcMinus.disabled = panelCount <= 1;
   pcPlus.disabled = panelCount >= maxPanels();
   pcMsg.textContent = pcPlus.disabled ? 'full' : '';
+  if (sceneMode === 'rooftop') {
+    const p = roofPlan();
+    fitOut.textContent = `${p.slots.length} · ${p.portrait ? 'portrait' : 'landscape'}`;
+  } else fitOut.textContent = '—';
 }
+document.getElementById('fitBtn').onclick = () => setPanelCount(maxPanels());
 function setPanelCount(n) {
   panelCount = Math.max(1, Math.min(maxPanels(), Math.round(n) || 1));
   rebuildAll(); updatePcUI(); dollyToFit();   // zoom out so the panels stay in frame

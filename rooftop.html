@@ -333,9 +333,13 @@ skyU['sunPosition'].value.copy(SUN_DIR);
 // Generate env map FROM the sky so reflections match the background exactly
 const skyScene = new THREE.Scene(); skyScene.add(sky);
 scene.environment = pmrem.fromScene(skyScene, 0.04, 0.01, 2000).texture;
-scene.add(sky); // move back after baking
-sky.material.fog = false;  // sky is at scale 10000 — don't fog it out
-scene.fog = new THREE.Fog(0xd4e8f5, 18, 60);  // gentle linear haze for depth, far enough to not touch the sky
+// The sky stays out of the visible scene — it is only used to bake the environment
+// map (so glass still reflects a real sky). The backdrop is a flat dark orange.
+sky.material.fog = false;
+const BACKDROP_TOP = '#7d3410', BACKDROP_BOT = '#b8551b';
+scene.background = makeGradient(BACKDROP_TOP, BACKDROP_BOT);
+// haze pushed well beyond the building so it tints the horizon, not the model
+scene.fog = new THREE.Fog(0x9c4616, 45, 140);
 
 // Sun directional light matching the sky's sun position
 const sunLight = new THREE.DirectionalLight(0xfffae8, 2.8); // warm tropical sun
@@ -364,8 +368,11 @@ scene.add(ground);
 const gardenGroundMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeGrassMap(), roughness: 0.95, metalness: 0.0 });
 const grassMat = new THREE.MeshStandardMaterial({ color: 0x4c7a30, roughness: 1.0, metalness: 0.0 }); // grass tufts
 const ROOF_HEIGHT = 3;    // rooftop building height (m)
-const brickMat   = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeBrickMap(), roughness: 0.88, metalness: 0.0 }); // brick walls
-const windowMat  = new THREE.MeshStandardMaterial({ color: 0x223243, roughness: 0.15, metalness: 0.40, side: THREE.DoubleSide }); // glass
+// Walls carry the same concrete finish as the roof deck, a shade darker. Its own
+// texture instance, so the deck's size-driven repeat doesn't disturb the walls.
+const wallConcreteMap = makeRoofConcreteMap();
+wallConcreteMap.repeat.set(5, 2);
+const wallMat = new THREE.MeshStandardMaterial({ color: 0xa2a2a2, map: wallConcreteMap, roughness: 0.95, metalness: 0.0 });
 // concrete roof deck — procedural finish (aggregate, speckle, screed bay joints)
 const concreteRoofMap = makeRoofConcreteMap();
 const concreteMat  = new THREE.MeshStandardMaterial({ color: 0xffffff, map: concreteRoofMap, roughness: 0.95, metalness: 0.0 });
@@ -849,33 +856,15 @@ function buildRoofDeck(w, l, pts) {
   return g;
 }
 
-// rooftop building: brick-red walls following the roof outline + windows, open roof edge
+// rooftop building: blank concrete walls following the roof outline, open roof edge
 function buildRoofBuilding(cx, cz, w, l) {
   const g = new THREE.Group(); g.name = 'roofBuilding'; g.position.set(cx, 0, cz);
   const pts = outlineWorld(w, l);
   const bodyH = ROOF_HEIGHT - DECK_T;                     // deck makes up the rest
   const wallGeo = new THREE.ExtrudeGeometry(polyShape(pts), { depth: bodyH, bevelEnabled: false });
-  const body = new THREE.Mesh(wallGeo, brickMat);
+  const body = new THREE.Mesh(wallGeo, wallMat);
   body.rotation.x = -Math.PI / 2; body.receiveShadow = true; g.add(body);
   g.add(buildRoofDeck(w, l, pts));
-  // windows spaced along every wall, facing out
-  const winW = 1.1, winH = 1.4, wy = 1.5, off = 0.03;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const a = pts[j], b = pts[i];
-    const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz);
-    if (len < winW + 0.8) continue;
-    let nx = dz / len, nz = -dx / len;                    // pick the outward-facing normal
-    const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
-    if (pointInPoly(pts, mx + nx * 0.05, mz + nz * 0.05)) { nx = -nx; nz = -nz; }
-    const n = Math.max(1, Math.floor(len / 2.4)), span = len - winW - 0.8;
-    for (let k = 0; k < n; k++) {
-      const t = 0.5 + (n === 1 ? 0 : (-span / 2 + k * span / (n - 1)) / len);
-      const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), windowMat);
-      win.position.set(a.x + dx * t + nx * off, wy, a.z + dz * t + nz * off);
-      win.rotation.y = Math.atan2(nx, nz);
-      g.add(win);
-    }
-  }
   return g;
 }
 

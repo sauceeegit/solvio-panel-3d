@@ -336,10 +336,12 @@ scene.environment = pmrem.fromScene(skyScene, 0.04, 0.01, 2000).texture;
 // The sky stays out of the visible scene — it is only used to bake the environment
 // map (so glass still reflects a real sky). The backdrop is a flat dark orange.
 sky.material.fog = false;
-const BACKDROP_TOP = '#7d3410', BACKDROP_BOT = '#b8551b';
+// Solvio brand orange (#ff6700, the accent used across solvio.solar), with a
+// slightly deeper tone below so the backdrop still reads with some depth.
+const BACKDROP_TOP = '#ff6700', BACKDROP_BOT = '#e05b00';
 scene.background = makeGradient(BACKDROP_TOP, BACKDROP_BOT);
 // haze pushed well beyond the building so it tints the horizon, not the model
-scene.fog = new THREE.Fog(0x9c4616, 45, 140);
+scene.fog = new THREE.Fog(0xf26200, 45, 140);
 
 // Sun directional light matching the sky's sun position
 const sunLight = new THREE.DirectionalLight(0xfffae8, 2.8); // warm tropical sun

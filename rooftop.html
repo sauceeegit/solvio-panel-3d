@@ -1468,10 +1468,14 @@ function updatePcUI() {
     let s = `landscape ${mark(p.landscape.slots.length, act === p.landscape)}`
           + ` · portrait ${mark(p.portrait.slots.length, act === p.portrait)}`;
     if (orientMode === 'angled') {                 // only computed when asked for
-      const a = angledPlan(), deg = Math.round(a.angle * 180 / Math.PI);
+      const a = angledPlan();
       s += ` · angled ${mark(a.slots.length, true)} @ ${bearingFromSouth(a.angle)}`;
     }
     fitOut.textContent = s;
+    // Auto always resolves to whichever of the two wins — say which, so it doesn't
+    // look like a dead step in the cycle when it lands on the same one as before.
+    const ob = document.getElementById('orientBtn');
+    if (ob && orientMode === 'auto') ob.textContent = `◇ Auto · ${act.portrait ? 'portrait' : 'landscape'}`;
   } else fitOut.textContent = '—';
 }
 document.getElementById('fitBtn').onclick = () => setPanelCount(maxPanels());

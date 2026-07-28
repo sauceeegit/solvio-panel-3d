@@ -156,10 +156,10 @@
       <input id="depSlider" type="range" min="0.7" max="1.4" step="0.05" value="0.95" autocomplete="off" /></label>
   </span>
   <span class="ctrlgroup" id="gardenCtrls">
-    <label><span id="gwLbl">Roof</span> width &nbsp;<b><span id="gwOut">7.0</span> m</b>
-      <input id="gwSlider" type="range" min="2" max="15" step="0.1" value="7" autocomplete="off" /></label>
-    <label id="glField"><span id="glLbl">Roof</span> length &nbsp;<b><span id="glOut">7.0</span> m</b>
-      <input id="glSlider" type="range" min="2" max="15" step="0.1" value="7" autocomplete="off" /></label>
+    <label><span id="gwLbl">Roof</span> width &nbsp;<b><span id="gwOut">11.3</span> m</b>
+      <input id="gwSlider" type="range" min="2" max="20" step="0.1" value="11.3" autocomplete="off" /></label>
+    <label id="glField"><span id="glLbl">Roof</span> length &nbsp;<b><span id="glOut">13.5</span> m</b>
+      <input id="glSlider" type="range" min="2" max="20" step="0.1" value="13.5" autocomplete="off" /></label>
   </span>
   <label id="panelsCtrl">Panels &nbsp;<b><span id="pcOut">2</span></b>
     <span class="pcrow"><button id="pcMinus" type="button">−</button><button id="pcPlus" type="button">+</button><small id="pcMsg"></small></span></label>
@@ -199,16 +199,17 @@ const BORDER = 0.014; // black laminate border (no cells)
 let balconyLen = 3 * H;    // handrail run along x (m)
 let railingHeight = 0.95;  // floor-to-top-rail height (m); depth fixed at 1.2 m
 let gardenWidth = 5, gardenLength = 5;   // garden plot (m): panels tile across width (x), wrap to rows in depth (z)
-let roofWidth = 7, roofLength = 7;       // rooftop bounding box (m) — the outline is scaled to fit
+let roofWidth = 11.3, roofLength = 13.5; // rooftop bounding box (m) — the outline is scaled to fit
 // Roof footprint as a closed polygon in normalised plan coordinates (0..1):
 // u runs west->east, v runs south->north. A north-up image (Google Maps, most site
 // plans) maps straight in — see solvioSetRoof().
-// Default is the supplied L-shaped plan. That drawing has its north arrow pointing
-// DOWN the page, so read as a view from above it is rotated 180 deg: the page's
-// down = north and the page's right = west. Its cut-out corner is therefore the
-// NORTH-WEST one, and the points below are the drawing turned the right way up.
+// Default is the supplied triangular plan (north arrow up, so it maps in directly):
+// a right angle at the west vertex, a 12 m edge running east at 20 deg south of
+// horizontal, and a 10 m edge up to the north apex. Solving that gives corners
+// (0,0), (11.276,-4.104) and (3.420,9.397) in metres, which normalise to the
+// points below inside an 11.3 x 13.5 m bounding box.
 let roofOutline = [
-  [1, 0], [0, 0], [0, 0.509], [0.397, 0.509], [0.397, 1], [1, 1]
+  [0, 0.304], [1, 0], [0.3033, 1]
 ];
 const EDGE_CLEAR = 0.20;                 // clearance from panel to building edge (m)
 let facadeWidth = 6;                     // facade wall width (m); wall height fixed at 3 m
@@ -291,7 +292,7 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.07;
 controls.minDistance = 0.6;
-controls.maxDistance = 30;   // rooftop scenes need more room than the balcony close-up
+controls.maxDistance = 60;   // rooftop scenes need more room than the balcony close-up
 controls.target.set(0, 0.5, -0.05);
 
 // ---- smooth, device-independent zoom ----
@@ -1270,7 +1271,8 @@ function frameScene() {
   const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
   controls.target.copy(c);
   if (sceneMode === 'facade') setView(22, 6, Math.max(s.x, s.y) * 1.15 + s.z + 1);   // near head-on
-  else setView(40, sceneMode === 'rooftop' ? 22 : 18, Math.max(s.x, s.z) * 1.15 + s.y);
+  // use the plan diagonal, so a long or wide roof still frames fully
+  else setView(40, sceneMode === 'rooftop' ? 22 : 18, Math.hypot(s.x, s.z) * 1.25 + s.y);
 }
 // open framed on the balcony
 frameScene();

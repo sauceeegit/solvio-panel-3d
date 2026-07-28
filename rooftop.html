@@ -1028,6 +1028,50 @@ function bestForOrientation(portrait, pts, bbox) {
   return { slots: best, portrait };
 }
 
+// ---- free-angle search -----------------------------------------------------
+// Rows don't have to run east-west. Rotating the whole array can pack far more
+// panels onto a roof whose edges aren't square — on a triangle, aligning with a
+// sloping edge is usually the win. Every panel shares the one rotation, so the
+// array stays coherent and all panels face the same way; the cost is that the
+// facing swings off due south by that angle.
+function rotPts(pts, phi) {                      // world -> grid frame
+  const c = Math.cos(phi), s = Math.sin(phi);
+  return pts.map(p => ({ x: p.x * c + p.z * s, z: -p.x * s + p.z * c }));
+}
+function unrotPt(p, phi) {                       // grid frame -> world
+  const c = Math.cos(phi), s = Math.sin(phi);
+  return { x: p.x * c - p.z * s, z: p.x * s + p.z * c };
+}
+const ANGLE_STEP_DEG = 3, ANGLE_PHASE_STEPS = 5;
+function bestAngled(pts) {
+  let best = { slots: [], portrait: false, angle: 0 };
+  for (let a = 0; a < 180; a += ANGLE_STEP_DEG) {
+    const phi = a * Math.PI / 180;
+    const gp = rotPts(pts, phi);
+    const xs = gp.map(p => p.x), zs = gp.map(p => p.z);
+    const bbox = { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
+    for (const portrait of [false, true]) {
+      const spanX = portrait ? W : H, spanZ = portrait ? H : W;
+      const stepX = spanX + IN_ROW_GAP, stepZ = spanZ + ROW_GAP;
+      for (let i = 0; i < ANGLE_PHASE_STEPS; i++)
+        for (let j = 0; j < ANGLE_PHASE_STEPS; j++) {
+          const slots = layoutSlots(gp, spanX, spanZ,
+            i / ANGLE_PHASE_STEPS * stepX, j / ANGLE_PHASE_STEPS * stepZ, bbox);
+          if (slots.length > best.slots.length)
+            best = { slots: slots.map(s => unrotPt(s, phi)), portrait, angle: phi };
+        }
+    }
+  }
+  return best;
+}
+let angledCache = null;
+function angledPlan() {
+  const key = JSON.stringify([roofOutline, plotW(), plotL(), EDGE_CLEAR, IN_ROW_GAP, ROW_GAP]);
+  if (angledCache && angledCache.key === key) return angledCache;
+  angledCache = { key, ...bestAngled(outlineWorld(plotW(), plotL())) };
+  return angledCache;
+}
+
 let roofPlanCache = null;
 // Optimised layout for BOTH orientations: { landscape, portrait }
 function roofPlan() {
@@ -1049,6 +1093,7 @@ function activePlan() {
   const p = roofPlan();
   if (orientMode === 'landscape') return p.landscape;
   if (orientMode === 'portrait')  return p.portrait;
+  if (orientMode === 'angled')    return angledPlan();
   return p.portrait.slots.length > p.landscape.slots.length ? p.portrait : p.landscape;
 }
 
@@ -1066,7 +1111,7 @@ function buildAssembly(mode) {
   scene.add(assembly);
   const N = panelCount = Math.max(1, Math.min(panelCount, maxPanels()));   // clamp to what fits
   const base = (mode === 'facade') ? buildFacadePanel()
-             : (mode === 'rooftop') ? buildFlatUnit(activePlan().portrait)
+             : (mode === 'rooftop') ? buildFlatUnit(!!activePlan().portrait)
              : (mode === 'garden') ? buildFlatUnit()
              : buildPanelUnit(mode);
 
@@ -1092,11 +1137,13 @@ function buildAssembly(mode) {
     const dropY = base.position.y;                   // unit origin sits on the surface
     if (onRoof) {
       // slots come from the optimiser: already clipped to the outline, best-fit grid
-      const slots = activePlan().slots;
+      const plan = activePlan();
+      const slots = plan.slots;
       for (let i = 0; i < N; i++) {
         const s = slots[i] || { x: 0, z: 0 };
         const u = (i === 0) ? base : base.clone(true);
         u.position.set(s.x, dropY + yLift, s.z);
+        u.rotation.y = -(plan.angle || 0);       // every panel shares the array rotation
         assembly.add(u);
       }
       assembly.add(buildRoofBuilding(0, 0, plotW(), plotL()));
@@ -1404,6 +1451,12 @@ const pcOut = document.getElementById('pcOut');
 const pcMinus = document.getElementById('pcMinus'), pcPlus = document.getElementById('pcPlus');
 const pcMsg = document.getElementById('pcMsg');
 const fitOut = document.getElementById('fitOut');
+// panels face the grid's +z; rotating the array by phi swings that off due south
+function bearingFromSouth(phi) {
+  const deg = Math.round(phi * 180 / Math.PI);
+  if (deg === 0 || deg === 180) return 'due S';
+  return deg <= 90 ? `S${deg}°W` : `S${180 - deg}°E`;
+}
 function updatePcUI() {
   pcOut.textContent = panelCount;
   pcMinus.disabled = panelCount <= 1;
@@ -1411,16 +1464,21 @@ function updatePcUI() {
   pcMsg.textContent = pcPlus.disabled ? 'full' : '';
   if (sceneMode === 'rooftop') {
     const p = roofPlan(), act = activePlan();
-    const mark = (n, isAct) => isAct ? `[${n}]` : `${n}`;
-    fitOut.textContent = `landscape ${mark(p.landscape.slots.length, !act.portrait)}`
-                       + ` · portrait ${mark(p.portrait.slots.length, act.portrait)}`;
+    const mark = (n, on) => on ? `[${n}]` : `${n}`;
+    let s = `landscape ${mark(p.landscape.slots.length, act === p.landscape)}`
+          + ` · portrait ${mark(p.portrait.slots.length, act === p.portrait)}`;
+    if (orientMode === 'angled') {                 // only computed when asked for
+      const a = angledPlan(), deg = Math.round(a.angle * 180 / Math.PI);
+      s += ` · angled ${mark(a.slots.length, true)} @ ${bearingFromSouth(a.angle)}`;
+    }
+    fitOut.textContent = s;
   } else fitOut.textContent = '—';
 }
 document.getElementById('fitBtn').onclick = () => setPanelCount(maxPanels());
 
 // ---- orientation choice: auto (whichever fits more) / force landscape / force portrait ----
-const ORIENTS = ['auto', 'landscape', 'portrait'];
-const ORIENT_LABEL = { auto: '◇ Auto', landscape: '▭ Landscape', portrait: '▯ Portrait' };
+const ORIENTS = ['auto', 'landscape', 'portrait', 'angled'];
+const ORIENT_LABEL = { auto: '◇ Auto', landscape: '▭ Landscape', portrait: '▯ Portrait', angled: '◈ Angled' };
 const orientBtn = document.getElementById('orientBtn');
 orientBtn.onclick = () => {
   orientMode = ORIENTS[(ORIENTS.indexOf(orientMode) + 1) % ORIENTS.length];

@@ -224,6 +224,7 @@ const EDGE_CLEAR = 0.20;                 // clearance from panel to building edg
 // Managed with solvioAddObstruction() / solvioSetObstructions() / solvioClearObstructions().
 let roofObstructions = [];
 const OBSTRUCTION_H = 1.5;               // height of the obstruction blocks (m)
+const SHADE_BUFFER = 2.0;                // slots within this of an obstruction are filled LAST
 let facadeWidth = 6;                     // facade wall width (m); wall height fixed at 3 m
 const FIXED_RAILY = 0.945, FIXED_RAILZ = -0.367; // balcony stays here in both modes; panel+mount shift to hook onto it
 let buildingVisible = true; // wall + floor slab (the "building"); toggled by the Building button
@@ -1058,6 +1059,18 @@ function layoutSlots(pts, obs, spanX, spanZ, offX, offZ, bbox) {
   return slots;
 }
 
+// Move slots sitting within SHADE_BUFFER of an obstruction to the end of the list.
+// Capacity is unchanged — this only decides fill order, so a part-filled roof leaves
+// the positions most likely to be shaded empty. Order within each group is kept.
+function deprioritiseShaded(slots, obs, spanX, spanZ) {
+  if (!obs || !obs.length) return { slots, clear: slots.length };
+  const hw = spanX / 2 + SHADE_BUFFER, hl = spanZ / 2 + SHADE_BUFFER;
+  const clear = [], shaded = [];
+  for (const s of slots)
+    (obs.some(o => rectHitsPoly(o, s.x, s.z, hw, hl)) ? shaded : clear).push(s);
+  return { slots: clear.concat(shaded), clear: clear.length };
+}
+
 // best grid phase for ONE orientation
 function bestForOrientation(portrait, pts, obs, bbox) {
   const spanX = portrait ? W : H, spanZ = portrait ? H : W;
@@ -1077,7 +1090,8 @@ function bestForOrientation(portrait, pts, obs, bbox) {
     const nudged = best.map(s => ({ x: s.x + dx, z: s.z + dz }));
     if (nudged.every(s => rectFits(pts, obs, s.x, s.z, hw, hl))) best = nudged;
   }
-  return { slots: best, portrait };
+  const d = deprioritiseShaded(best, obs, spanX, spanZ);
+  return { slots: d.slots, clear: d.clear, portrait };
 }
 
 // ---- free-angle search -----------------------------------------------------
@@ -1111,10 +1125,17 @@ function bestAngled(pts, obs) {
           const slots = layoutSlots(gp, go, spanX, spanZ,
             i / ANGLE_PHASE_STEPS * stepX, j / ANGLE_PHASE_STEPS * stepZ, bbox);
           if (slots.length > best.slots.length)
-            best = { slots: slots.map(s => unrotPt(s, phi)), portrait, angle: phi };
+            best = { slots, portrait, angle: phi };      // keep grid coords for now
         }
     }
   }
+  // The panel rect is only axis-aligned in the grid frame, so rank for shading there
+  // (with the obstructions rotated to match), then convert the slots back to world.
+  const spanX = best.portrait ? W : H, spanZ = best.portrait ? H : W;
+  const go = obs.map(o => rotPts(o, best.angle));
+  const d = deprioritiseShaded(best.slots, go, spanX, spanZ);
+  best.slots = d.slots.map(s => unrotPt(s, best.angle));
+  best.clear = d.clear;
   return best;
 }
 // obstructions are part of the cache key, so adding one re-runs the optimiser
@@ -1569,6 +1590,8 @@ function updatePcUI() {
       const a = angledPlan();
       s += ` · angled ${mark(a.slots.length, true)} @ ${bearingFromSouth(a.angle)}`;
     }
+    // with obstructions present, show how many slots sit outside the 2 m shading buffer
+    if (roofObstructions.length) s += ` · ${act.clear}/${act.slots.length} clear of obstruction`;
     fitOut.textContent = s;
   } else fitOut.textContent = '—';
 }

@@ -217,6 +217,13 @@ let roofOutline = [
   [0, 0.304], [1, 0], [0.3033, 1]
 ];
 const EDGE_CLEAR = 0.20;                 // clearance from panel to building edge (m)
+// Obstructions: anything on the roof the array has to work around — stair cores, AC
+// platforms, vents, water tanks. Each is a closed polygon in the SAME normalised plan
+// coordinates as roofOutline, so they scale with the roof and can be traced off the
+// same image. Panels keep the EDGE_CLEAR gap from them, just like the roof edge.
+// Managed with solvioAddObstruction() / solvioSetObstructions() / solvioClearObstructions().
+let roofObstructions = [];
+const OBSTRUCTION_H = 1.5;               // height of the obstruction blocks (m)
 let facadeWidth = 6;                     // facade wall width (m); wall height fixed at 3 m
 const FIXED_RAILY = 0.945, FIXED_RAILZ = -0.367; // balcony stays here in both modes; panel+mount shift to hook onto it
 let buildingVisible = true; // wall + floor slab (the "building"); toggled by the Building button
@@ -375,6 +382,11 @@ const ROOF_HEIGHT = 3;    // rooftop building height (m)
 const wallConcreteMap = makeRoofConcreteMap();
 wallConcreteMap.repeat.set(5, 2);
 const wallMat = new THREE.MeshStandardMaterial({ color: 0xa2a2a2, map: wallConcreteMap, roughness: 0.95, metalness: 0.0 });
+// roof obstructions — half transparent so the deck stays readable through them
+const obstructionMat = new THREE.MeshStandardMaterial({
+  color: 0x5c6470, roughness: 0.55, metalness: 0.10,
+  transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false
+});
 // concrete roof deck — procedural finish (aggregate, speckle, screed bay joints)
 const concreteRoofMap = makeRoofConcreteMap();
 const concreteMat  = new THREE.MeshStandardMaterial({ color: 0xffffff, map: concreteRoofMap, roughness: 0.95, metalness: 0.0 });
@@ -768,6 +780,12 @@ function buildNorthMarker(pts) {
 function outlineWorld(w, l) {
   return roofOutline.map(([u, v]) => ({ x: (u - 0.5) * w, z: (0.5 - v) * l }));
 }
+// same mapping for every obstruction polygon
+function obstructionsWorld(w, l) {
+  return roofObstructions
+    .filter(poly => poly.length >= 3)
+    .map(poly => poly.map(([u, v]) => ({ x: (u - 0.5) * w, z: (0.5 - v) * l })));
+}
 // Shape for extrusion: built as (x, -z) so a -90 deg X rotation stands it up with z intact.
 function polyShape(pts) {
   const s = new THREE.Shape();
@@ -789,14 +807,28 @@ function segCross(p1, p2, p3, p4) {                      // do segments p1p2 and
   const d1 = d(p3, p4, p1), d2 = d(p3, p4, p2), d3 = d(p1, p2, p3), d4 = d(p1, p2, p4);
   return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
 }
-// Is an axis-aligned rectangle wholly inside the polygon?
-function rectFits(pts, cx, cz, hw, hl) {
-  const c = [{ x: cx - hw, z: cz - hl }, { x: cx + hw, z: cz - hl },
-             { x: cx + hw, z: cz + hl }, { x: cx - hw, z: cz + hl }];
+function rectCorners(cx, cz, hw, hl) {
+  return [{ x: cx - hw, z: cz - hl }, { x: cx + hw, z: cz - hl },
+          { x: cx + hw, z: cz + hl }, { x: cx - hw, z: cz + hl }];
+}
+// Does an axis-aligned rectangle touch the polygon at all?
+function rectHitsPoly(pts, cx, cz, hw, hl) {
+  const c = rectCorners(cx, cz, hw, hl);
+  for (const p of c) if (pointInPoly(pts, p.x, p.z)) return true;   // rect corner inside it
+  for (const p of pts) if (Math.abs(p.x - cx) <= hw && Math.abs(p.z - cz) <= hl) return true;  // its corner inside rect
+  for (let i = 0; i < 4; i++)                                       // or the outlines cross
+    for (let j = 0, k = pts.length - 1; j < pts.length; k = j++)
+      if (segCross(c[i], c[(i + 1) % 4], pts[k], pts[j])) return true;
+  return false;
+}
+// Is an axis-aligned rectangle wholly inside the roof and clear of every obstruction?
+function rectFits(pts, obs, cx, cz, hw, hl) {
+  const c = rectCorners(cx, cz, hw, hl);
   for (const p of c) if (!pointInPoly(pts, p.x, p.z)) return false;
   for (let i = 0; i < 4; i++)                            // and no edge of the roof cuts through it
     for (let j = 0, k = pts.length - 1; j < pts.length; k = j++)
       if (segCross(c[i], c[(i + 1) % 4], pts[k], pts[j])) return false;
+  if (obs) for (const o of obs) if (rectHitsPoly(o, cx, cz, hw, hl)) return false;
   return true;
 }
 // z ranges covered by the polygon on the vertical line at x (handles notches / U shapes)
@@ -862,6 +894,21 @@ function buildRoofDeck(w, l, pts) {
       const m = new THREE.Mesh(dg, metalRoofMat);
       m.receiveShadow = true; g.add(m);
     }
+  }
+  return g;
+}
+
+// Obstruction blocks standing on the roof deck — 1.5 m tall, half transparent so
+// the deck and the array behind them stay readable.
+function buildObstructions(w, l) {
+  const g = new THREE.Group(); g.name = 'roofObstructions';
+  for (const pts of obstructionsWorld(w, l)) {
+    const geo = new THREE.ExtrudeGeometry(polyShape(pts), { depth: OBSTRUCTION_H, bevelEnabled: false });
+    const m = new THREE.Mesh(geo, obstructionMat);
+    m.rotation.x = -Math.PI / 2;                 // stand it up, base on the deck
+    m.position.y = ROOF_HEIGHT;
+    m.castShadow = true;
+    g.add(m);
   }
   return g;
 }
@@ -1001,24 +1048,24 @@ let orientMode = 'portrait';             // 'landscape' | 'portrait' | 'angled'
                                          // (set at startup to whichever fits more)
 
 // count the slots a given orientation + grid phase yields
-function layoutSlots(pts, spanX, spanZ, offX, offZ, bbox) {
+function layoutSlots(pts, obs, spanX, spanZ, offX, offZ, bbox) {
   const hw = spanX / 2 + EDGE_CLEAR, hl = spanZ / 2 + EDGE_CLEAR;
   const stepX = spanX + IN_ROW_GAP, stepZ = spanZ + ROW_GAP;
   const slots = [];
   for (let z = bbox.minZ + hl + offZ; z <= bbox.maxZ - hl + 1e-6; z += stepZ)
     for (let x = bbox.minX + hw + offX; x <= bbox.maxX - hw + 1e-6; x += stepX)
-      if (rectFits(pts, x, z, hw, hl)) slots.push({ x, z });
+      if (rectFits(pts, obs, x, z, hw, hl)) slots.push({ x, z });
   return slots;
 }
 
 // best grid phase for ONE orientation
-function bestForOrientation(portrait, pts, bbox) {
+function bestForOrientation(portrait, pts, obs, bbox) {
   const spanX = portrait ? W : H, spanZ = portrait ? H : W;
   const stepX = spanX + IN_ROW_GAP, stepZ = spanZ + ROW_GAP;
   let best = [];
   for (let i = 0; i < PHASE_STEPS; i++)
     for (let j = 0; j < PHASE_STEPS; j++) {
-      const slots = layoutSlots(pts, spanX, spanZ, i / PHASE_STEPS * stepX, j / PHASE_STEPS * stepZ, bbox);
+      const slots = layoutSlots(pts, obs, spanX, spanZ, i / PHASE_STEPS * stepX, j / PHASE_STEPS * stepZ, bbox);
       if (slots.length > best.length) best = slots;
     }
   // centre the winning grid in the space it actually uses, so it doesn't hug one edge
@@ -1028,7 +1075,7 @@ function bestForOrientation(portrait, pts, bbox) {
     const dz = ((bbox.minZ + bbox.maxZ) - (Math.min(...sz) + Math.max(...sz))) / 2;
     const hw = spanX / 2 + EDGE_CLEAR, hl = spanZ / 2 + EDGE_CLEAR;
     const nudged = best.map(s => ({ x: s.x + dx, z: s.z + dz }));
-    if (nudged.every(s => rectFits(pts, s.x, s.z, hw, hl))) best = nudged;
+    if (nudged.every(s => rectFits(pts, obs, s.x, s.z, hw, hl))) best = nudged;
   }
   return { slots: best, portrait };
 }
@@ -1048,11 +1095,12 @@ function unrotPt(p, phi) {                       // grid frame -> world
   return { x: p.x * c - p.z * s, z: p.x * s + p.z * c };
 }
 const ANGLE_STEP_DEG = 3, ANGLE_PHASE_STEPS = 5;
-function bestAngled(pts) {
+function bestAngled(pts, obs) {
   let best = { slots: [], portrait: false, angle: 0 };
   for (let a = 0; a < 180; a += ANGLE_STEP_DEG) {
     const phi = a * Math.PI / 180;
     const gp = rotPts(pts, phi);
+    const go = obs.map(o => rotPts(o, phi));       // obstructions rotate with the roof
     const xs = gp.map(p => p.x), zs = gp.map(p => p.z);
     const bbox = { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
     for (const portrait of [false, true]) {
@@ -1060,7 +1108,7 @@ function bestAngled(pts) {
       const stepX = spanX + IN_ROW_GAP, stepZ = spanZ + ROW_GAP;
       for (let i = 0; i < ANGLE_PHASE_STEPS; i++)
         for (let j = 0; j < ANGLE_PHASE_STEPS; j++) {
-          const slots = layoutSlots(gp, spanX, spanZ,
+          const slots = layoutSlots(gp, go, spanX, spanZ,
             i / ANGLE_PHASE_STEPS * stepX, j / ANGLE_PHASE_STEPS * stepZ, bbox);
           if (slots.length > best.slots.length)
             best = { slots: slots.map(s => unrotPt(s, phi)), portrait, angle: phi };
@@ -1069,11 +1117,16 @@ function bestAngled(pts) {
   }
   return best;
 }
+// obstructions are part of the cache key, so adding one re-runs the optimiser
+function planKey() {
+  return JSON.stringify([roofOutline, roofObstructions, plotW(), plotL(), EDGE_CLEAR, IN_ROW_GAP, ROW_GAP]);
+}
 let angledCache = null;
 function angledPlan() {
-  const key = JSON.stringify([roofOutline, plotW(), plotL(), EDGE_CLEAR, IN_ROW_GAP, ROW_GAP]);
+  const key = planKey();
   if (angledCache && angledCache.key === key) return angledCache;
-  angledCache = { key, ...bestAngled(outlineWorld(plotW(), plotL())) };
+  const w = plotW(), l = plotL();
+  angledCache = { key, ...bestAngled(outlineWorld(w, l), obstructionsWorld(w, l)) };
   return angledCache;
 }
 
@@ -1081,15 +1134,15 @@ let roofPlanCache = null;
 // Optimised layout for BOTH orientations: { landscape, portrait }
 function roofPlan() {
   const w = plotW(), l = plotL();
-  const key = JSON.stringify([roofOutline, w, l, EDGE_CLEAR, IN_ROW_GAP, ROW_GAP]);
+  const key = planKey();
   if (roofPlanCache && roofPlanCache.key === key) return roofPlanCache;
-  const pts = outlineWorld(w, l);
+  const pts = outlineWorld(w, l), obs = obstructionsWorld(w, l);
   const xs = pts.map(p => p.x), zs = pts.map(p => p.z);
   const bbox = { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
   roofPlanCache = {
     key,
-    landscape: bestForOrientation(false, pts, bbox),
-    portrait:  bestForOrientation(true,  pts, bbox)
+    landscape: bestForOrientation(false, pts, obs, bbox),
+    portrait:  bestForOrientation(true,  pts, obs, bbox)
   };
   return roofPlanCache;
 }
@@ -1150,6 +1203,7 @@ function buildAssembly(mode) {
         assembly.add(u);
       }
       assembly.add(buildRoofBuilding(0, 0, plotW(), plotL()));
+      assembly.add(buildObstructions(plotW(), plotL()));
       assembly.add(buildNorthMarker(outlineWorld(plotW(), plotL())));
       return { assembly };
     }
@@ -1348,6 +1402,47 @@ window.solvioSetRoof = (opts = {}) => {
   if (panelCount > maxPanels()) panelCount = maxPanels();
   rebuildAll(); updatePcUI(); frameScene();
   return { outline: roofOutline, width: roofWidth, length: roofLength, slots: maxPanels() };
+};
+
+// ---- roof obstruction API --------------------------------------------------
+// Mark areas the array must avoid. Accepts the same coordinate forms as the roof
+// outline, plus a plain rectangle in metres measured from the roof centre:
+//   solvioAddObstruction([[u,v], ...])                                  normalised 0..1
+//   solvioAddObstruction([[px,py], ...], { imageWidth, imageHeight })   traced pixels
+//   solvioAddObstruction({ centre: [x, z], size: [w, l] })              metres, x east / z south
+// Panels keep the same 200 mm clearance from these as from the roof edge.
+function obstructionToPlan(spec, opts = {}) {
+  if (spec && !Array.isArray(spec) && spec.centre && spec.size) {
+    const [cx, cz] = spec.centre, [sw, sl] = spec.size;
+    const toUV = (x, z) => [x / roofWidth + 0.5, 0.5 - z / roofLength];
+    return [toUV(cx - sw / 2, cz - sl / 2), toUV(cx + sw / 2, cz - sl / 2),
+            toUV(cx + sw / 2, cz + sl / 2), toUV(cx - sw / 2, cz + sl / 2)];
+  }
+  if (!Array.isArray(spec) || spec.length < 3) return null;
+  const { imageWidth, imageHeight } = opts;
+  return imageWidth && imageHeight
+    ? spec.map(([px, py]) => [px / imageWidth, 1 - py / imageHeight])
+    : spec.map(([u, v]) => [u, v]);
+}
+function refreshAfterRoofChange() {
+  if (panelCount > maxPanels()) panelCount = maxPanels();
+  rebuildAll(); updatePcUI();
+}
+window.solvioAddObstruction = (spec, opts) => {
+  const poly = obstructionToPlan(spec, opts);
+  if (poly) roofObstructions.push(poly);
+  refreshAfterRoofChange();
+  return { obstructions: roofObstructions.length, slots: maxPanels() };
+};
+window.solvioSetObstructions = (list = [], opts) => {
+  roofObstructions = list.map(s => obstructionToPlan(s, opts)).filter(Boolean);
+  refreshAfterRoofChange();
+  return { obstructions: roofObstructions.length, slots: maxPanels() };
+};
+window.solvioClearObstructions = () => {
+  roofObstructions = [];
+  refreshAfterRoofChange();
+  return { obstructions: 0, slots: maxPanels() };
 };
 
 // isolated reference render of just the panel + mount (used as a style reference for AI compositing)

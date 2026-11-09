@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Solvio — Earth Pod 3D</title>
+<style>
+  :root { color-scheme: light; }
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  #app { position: fixed; inset: 0; }
+  #title {
+    position: fixed; left: 18px; top: 16px; z-index: 10; user-select: none;
+    color: #2b2b2b; font-weight: 600; font-size: 15px; letter-spacing: .3px;
+  }
+  #title span { display: block; color: #7a7a7a; font-weight: 400; font-size: 11px; margin-top: 2px; }
+  #angle {
+    position: fixed; left: 18px; top: 60px; z-index: 10; user-select: none;
+    color: #5b5b5b; font-size: 12px; letter-spacing: .2px; font-variant-numeric: tabular-nums;
+    background: rgba(255,255,255,.55); backdrop-filter: blur(6px);
+    padding: 7px 11px; border-radius: 9px; border: 1px solid rgba(0,0,0,.06);
+  }
+  #angle b { color: #222; font-weight: 600; }
+  #zoomCtrl { position: fixed; right: 14px; top: 14px; z-index: 10; display: flex; flex-direction: column; gap: 6px; }
+  #zoomCtrl button {
+    width: 34px; height: 34px; font-size: 19px; line-height: 1; color: #333; cursor: pointer;
+    background: rgba(255,255,255,.88); border: 1px solid rgba(0,0,0,.14); border-radius: 8px;
+    backdrop-filter: blur(6px);
+  }
+  #spin, #layoutBtn {
+    position: fixed; right: 14px; top: 96px; z-index: 10;
+    font-size: 12px; color: #444; background: rgba(255,255,255,.88);
+    border: 1px solid rgba(0,0,0,.14); border-radius: 8px; padding: 8px 12px; cursor: pointer;
+    backdrop-filter: blur(6px);
+  }
+  #layoutBtn { top: 138px; }
+  #draghint {
+    position: fixed; left: 50%; bottom: 9%; transform: translateX(-50%);
+    z-index: 6; pointer-events: none; user-select: none; white-space: nowrap;
+    padding: 9px 16px; border-radius: 999px;
+    background: rgba(20,22,24,.34); color: rgba(255,255,255,.92);
+    font-size: 13px; font-weight: 600; letter-spacing: .3px;
+    backdrop-filter: blur(4px); opacity: .78; transition: opacity .5s ease;
+  }
+  #draghint.hide { opacity: 0; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="title">Solvio 3D model — Earth Pod<span>12 m × 3 m capsule · concept, dimensions approximate</span></div>
+<div id="angle">—</div>
+<div id="zoomCtrl"><button id="zoomIn" type="button" title="Zoom in">+</button><button id="zoomOut" type="button" title="Zoom out">−</button></div>
+<button id="spin">▶ Auto-rotate</button>
+<button id="layoutBtn">◧ 6 panels · 3 + 3</button>
+<div id="draghint">✋ Drag to orbit</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+window.__err = null;
+addEventListener('error', e => { window.__err = String(e.message || e.error); });
+
+// =================== pod dimensions (metres) ===================
+// Length 12, width ~3 per the brief; everything else scaled off the photos.
+const L = 12.0, WD = 3.0, HW = WD / 2;
+const RF = 1.10;            // plan corner radius, front (balcony end — big soft curve)
+const RR = 0.80;            // plan corner radius, rear
+const PIER_TOP = 0.55;      // underside of the hull
+const FLOOR_TOP = 0.95;     // deck / interior floor level
+const WALL_TOP = 2.95;      // glass and shell walls stop here
+const ROOF_TOP = 3.42;      // top of the roof cap
+const X_F = -L / 2;         // front tip
+const X_R = L / 2;          // rear tip
+const X_GLASS = X_F + 1.6;  // balcony | glazed living zone boundary (front wall + door)
+const X_HULL = X_F + 4.4;   // glazed zone | solid shell boundary
+const X_RGLASS = X_R - 2.6; // solid shell | rear glazed cockpit boundary
+
+// =================== renderer / scene ===================
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+function makeGradient(top, bottom) {
+  const cv = document.createElement('canvas'); cv.width = 2; cv.height = 256;
+  const c = cv.getContext('2d');
+  const g = c.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, top); g.addColorStop(1, bottom);
+  c.fillStyle = g; c.fillRect(0, 0, 2, 256);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+scene.background = makeGradient('#cfe3f4', '#eef0e9');   // soft sky → pale horizon
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(11, 3.2, 10);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.minDistance = 4;
+controls.maxDistance = 45;
+controls.maxPolarAngle = Math.PI * 0.52;
+controls.target.set(0, 1.55, 0);
+
+// smooth, device-independent zoom (same easing pattern as the other Solvio viewers)
+controls.enableZoom = false;
+let zoomTarget = camera.position.distanceTo(controls.target);
+let zooming = false;
+renderer.domElement.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const step = Math.max(-40, Math.min(40, e.deltaY)) * 0.0016;
+  zoomTarget = THREE.MathUtils.clamp(zoomTarget * Math.exp(step), controls.minDistance, controls.maxDistance);
+  zooming = true;
+}, { passive: false });
+function zoomBy(f) {
+  const base = zooming ? zoomTarget : camera.position.distanceTo(controls.target);
+  zoomTarget = THREE.MathUtils.clamp(base * f, controls.minDistance, controls.maxDistance);
+  zooming = true;
+}
+document.getElementById('zoomIn').onclick  = () => zoomBy(0.80);
+document.getElementById('zoomOut').onclick = () => zoomBy(1.25);
+
+// ---- lights ----
+scene.add(new THREE.HemisphereLight(0xdfeaf5, 0xb8c0a8, 0.75));
+const sun = new THREE.DirectionalLight(0xfff6e6, 2.2);
+sun.position.set(9, 14, 7);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -10; sun.shadow.camera.right = 10;
+sun.shadow.camera.top = 10; sun.shadow.camera.bottom = -10;
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0xffffff, 0.22));
+const interiorLight = new THREE.PointLight(0xffe6c4, 14, 10, 2);   // warm glow inside the glazed zone
+interiorLight.position.set(-3.0, 2.35, 0);
+scene.add(interiorLight);
+const rearLight = new THREE.PointLight(0xffe6c4, 12, 9, 2);        // and inside the rear cockpit
+rearLight.position.set(4.4, 2.3, 0);
+scene.add(rearLight);
+
+// =================== materials ===================
+const shellMat = new THREE.MeshPhysicalMaterial({   // white gel-coat composite shell
+  color: 0xf2f2ee, roughness: 0.38, metalness: 0.0,
+  clearcoat: 0.55, clearcoatRoughness: 0.35, envMapIntensity: 0.9
+});
+const shellDim = new THREE.MeshPhysicalMaterial({   // slightly warmer underside / belly
+  color: 0xe4e3dc, roughness: 0.5, metalness: 0.0, clearcoat: 0.3, envMapIntensity: 0.7
+});
+const trimMat = new THREE.MeshStandardMaterial({    // black gasket / band trim
+  color: 0x17181a, roughness: 0.45, metalness: 0.25, envMapIntensity: 1.0
+});
+const frameMat = new THREE.MeshStandardMaterial({   // window / door frames, near-black aluminium
+  color: 0x202225, roughness: 0.35, metalness: 0.6, envMapIntensity: 1.1
+});
+const glassMat = new THREE.MeshPhysicalMaterial({   // tinted architectural glass
+  color: 0xa8b8bf, roughness: 0.05, metalness: 0.0,
+  transmission: 0.88, thickness: 0.02, ior: 1.5,
+  transparent: true, side: THREE.DoubleSide, envMapIntensity: 1.2
+});
+const balGlassMat = new THREE.MeshPhysicalMaterial({ // balustrade glass, a touch clearer
+  color: 0xaebbc2, roughness: 0.05, metalness: 0.0,
+  transmission: 0.88, thickness: 0.015, ior: 1.5,
+  transparent: true, side: THREE.DoubleSide, envMapIntensity: 1.2
+});
+function makeCurtainMap() {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 64;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#c2c4c8'; c.fillRect(0, 0, 256, 64);
+  for (let x = 0; x < 256; x++) {                    // soft vertical drape shading
+    const v = Math.sin(x * 0.24) * 0.5 + Math.sin(x * 0.07 + 1.3) * 0.5;
+    c.fillStyle = `rgba(${v > 0 ? 255 : 40},${v > 0 ? 255 : 42},${v > 0 ? 255 : 46},${Math.abs(v) * 0.16})`;
+    c.fillRect(x, 0, 1, 64);
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = THREE.RepeatWrapping; t.repeat.set(3, 1);
+  return t;
+}
+const curtainMat = new THREE.MeshStandardMaterial({
+  color: 0xffffff, map: makeCurtainMap(), roughness: 0.9, metalness: 0.0, side: THREE.DoubleSide
+});
+function makeDeckMap() {
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 256;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#a9825c'; c.fillRect(0, 0, 512, 256);
+  for (let i = 0; i < 9; i++) {                      // plank joints + grain
+    c.fillStyle = 'rgba(60,40,25,0.35)'; c.fillRect(0, i * 28 + 26, 512, 2);
+    c.fillStyle = `rgba(255,235,200,${0.05 + Math.random() * 0.05})`;
+    c.fillRect(0, i * 28, 512, 12);
+  }
+  for (let i = 0; i < 700; i++) {
+    c.fillStyle = Math.random() > 0.5 ? 'rgba(80,55,30,0.10)' : 'rgba(255,230,190,0.08)';
+    c.fillRect(Math.random() * 512, Math.random() * 256, Math.random() * 30 + 4, 1.2);
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 1);
+  return t;
+}
+const deckMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeDeckMap(), roughness: 0.8, metalness: 0.0 });
+const ceilDarkMat = new THREE.MeshStandardMaterial({ color: 0x24262a, roughness: 0.7, metalness: 0.1 });
+const interiorMat = new THREE.MeshStandardMaterial({ color: 0xf0efe9, roughness: 0.9, metalness: 0.0 });
+const blockMat = new THREE.MeshStandardMaterial({ color: 0x8b8d8e, roughness: 0.95, metalness: 0.0 });
+function makeGrassMap() {
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 512;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#7da35a'; c.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 9000; i++) {
+    const g = 120 + Math.random() * 90;
+    c.fillStyle = `rgba(${g * 0.55},${g},${g * 0.4},0.25)`;
+    c.fillRect(Math.random() * 512, Math.random() * 512, 2, 2 + Math.random() * 3);
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(9, 9);
+  return t;
+}
+
+// =================== plan outline helpers ===================
+// The whole pod is drawn from one rounded-rectangle plan outline (x = length,
+// shape-y = world z). grow > 0 offsets the outline outward (radii grow with it).
+function planShape(grow = 0, clipFrontAt = null, clipRearAt = null) {
+  const x0 = X_F - grow, x1 = X_R + grow, h = HW + grow;
+  const rf = RF + grow, rr = RR + grow;
+  const s = new THREE.Shape();
+  if (clipFrontAt !== null && clipRearAt !== null) { // straight cuts both ends (mid-shell)
+    s.moveTo(clipFrontAt, -h);
+    s.lineTo(clipRearAt, -h);
+    s.lineTo(clipRearAt, h);
+    s.lineTo(clipFrontAt, h);
+  } else if (clipFrontAt === null) {
+    s.moveTo(x0 + rf, -h);
+    s.lineTo(x1 - rr, -h);
+    s.quadraticCurveTo(x1, -h, x1, -h + rr);
+    s.lineTo(x1, h - rr);
+    s.quadraticCurveTo(x1, h, x1 - rr, h);
+    s.lineTo(x0 + rf, h);
+    s.quadraticCurveTo(x0, h, x0, h - rf);
+    s.lineTo(x0, -h + rf);
+    s.quadraticCurveTo(x0, -h, x0 + rf, -h);
+  } else {                                            // straight cut across the front (hull piece)
+    const xc = clipFrontAt;
+    s.moveTo(xc, -h);
+    s.lineTo(x1 - rr, -h);
+    s.quadraticCurveTo(x1, -h, x1, -h + rr);
+    s.lineTo(x1, h - rr);
+    s.quadraticCurveTo(x1, h, x1 - rr, h);
+    s.lineTo(xc, h);
+    s.lineTo(xc, -h);
+  }
+  s.closePath();
+  return s;
+}
+function planRing(growOuter, growInner) {            // band that wraps the plan outline
+  const s = planShape(growOuter);
+  s.holes.push(planShape(growInner));
+  return s;
+}
+// plan-shape extrusion: top face at yTop, extruded DOWN by depth (plus bevels)
+function planExtrude(shape, depth, yTop, mat, bevel = {}) {
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth, bevelEnabled: !!bevel.size, curveSegments: 24,
+    bevelThickness: bevel.thickness || bevel.size || 0,
+    bevelSize: bevel.size || 0, bevelOffset: -(bevel.size || 0), bevelSegments: 4
+  });
+  const m = new THREE.Mesh(geo, mat);
+  m.rotation.x = Math.PI / 2;                        // shape-y → world z, depth → downward
+  m.position.y = yTop - (bevel.thickness || bevel.size || 0);
+  m.castShadow = m.receiveShadow = true;
+  return m;
+}
+// sample the FRONT part of the plan outline (balcony curve) as an [(x,z)] polyline
+function frontCurvePoints(grow, xEnd, n = 40) {
+  const x0 = X_F - grow, h = HW + grow, rf = RF + grow;
+  const pts = [];
+  pts.push({ x: xEnd, z: -h });
+  pts.push({ x: x0 + rf, z: -h });
+  for (let i = 1; i < n; i++) {                      // front-left corner arc
+    const a = (i / n) * Math.PI / 2;
+    pts.push({ x: x0 + rf - rf * Math.sin(a), z: -h + rf - rf * Math.cos(a) });
+  }
+  pts.push({ x: x0, z: -h + rf });
+  pts.push({ x: x0, z: h - rf });
+  for (let i = 1; i < n; i++) {                      // front-right corner arc
+    const a = (i / n) * Math.PI / 2;
+    pts.push({ x: x0 + rf - rf * Math.cos(a), z: h - rf + rf * Math.sin(a) });
+  }
+  pts.push({ x: x0 + rf, z: h });
+  pts.push({ x: xEnd, z: h });
+  return pts;
+}
+// same, for the REAR of the outline (the rear glazed cockpit)
+function rearCurvePoints(grow, xStart, n = 40) {
+  const x1 = X_R + grow, h = HW + grow, rr = RR + grow;
+  const pts = [];
+  pts.push({ x: xStart, z: -h });
+  pts.push({ x: x1 - rr, z: -h });
+  for (let i = 1; i < n; i++) {                      // rear-left corner arc
+    const a = (i / n) * Math.PI / 2;
+    pts.push({ x: x1 - rr + rr * Math.sin(a), z: -h + rr - rr * Math.cos(a) });
+  }
+  pts.push({ x: x1, z: -h + rr });
+  pts.push({ x: x1, z: h - rr });
+  for (let i = 1; i < n; i++) {                      // rear-right corner arc
+    const a = (i / n) * Math.PI / 2;
+    pts.push({ x: x1 - rr + rr * Math.cos(a), z: h - rr + rr * Math.sin(a) });
+  }
+  pts.push({ x: x1 - rr, z: h });
+  pts.push({ x: xStart, z: h });
+  return pts;
+}
+// vertical ribbon along a polyline (curved glass, curtains…)
+function ribbon(pts, y0, y1, mat) {
+  const pos = [], idx = [];
+  for (let i = 0; i < pts.length; i++) {
+    pos.push(pts[i].x, y0, pts[i].z, pts[i].x, y1, pts[i].z);
+    if (i) { const a = 2 * i; idx.push(a - 2, a, a - 1, a, a + 1, a - 1); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx); g.computeVertexNormals();
+  return new THREE.Mesh(g, mat);
+}
+// chamfered octagon with softened corners (the capsule picture window), centred on 0,0.
+// Built from 8 chamfer points, each corner join eased with a small quadratic.
+function octagonShape(w, h, cut, r) {
+  const hw = w / 2, hh = h / 2;
+  const P = [                                        // chamfer polygon, counter-clockwise
+    [-hw + cut, -hh], [hw - cut, -hh],               // bottom edge
+    [hw, -hh + cut], [hw, hh - cut],                 // right edge
+    [hw - cut, hh], [-hw + cut, hh],                 // top edge
+    [-hw, hh - cut], [-hw, -hh + cut]                // left edge
+  ];
+  const s = new THREE.Shape();
+  const n = P.length;
+  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  for (let i = 0; i < n; i++) {
+    const prev = P[(i + n - 1) % n], cur = P[i], next = P[(i + 1) % n];
+    const lenIn = Math.hypot(cur[0] - prev[0], cur[1] - prev[1]);
+    const lenOut = Math.hypot(next[0] - cur[0], next[1] - cur[1]);
+    const a = lerp(cur, prev, Math.min(r / lenIn, 0.45));
+    const b = lerp(cur, next, Math.min(r / lenOut, 0.45));
+    if (i === 0) s.moveTo(a[0], a[1]); else s.lineTo(a[0], a[1]);
+    s.quadraticCurveTo(cur[0], cur[1], b[0], b[1]);  // eased corner through the chamfer point
+  }
+  s.closePath();
+  return s;
+}
+
+// =================== build the pod ===================
+const pod = new THREE.Group();
+scene.add(pod);
+
+// ---- floor slab / belly (full length, boat-hull bevel underneath) ----
+pod.add(planExtrude(planShape(0), 0.22, FLOOR_TOP, shellDim, { size: 0.16, thickness: 0.18 }));
+
+// ---- solid shell hull (x ≥ X_HULL), walls curving in at top and bottom ----
+{
+  const hull = planExtrude(planShape(-0.02, X_HULL, X_RGLASS), WALL_TOP - FLOOR_TOP - 0.24, WALL_TOP - 0.12, shellMat,
+    { size: 0.12, thickness: 0.12 });
+  pod.add(hull);
+}
+
+// ---- roof cap (overhangs everywhere; cantilevers over the balcony) ----
+pod.add(planExtrude(planShape(0.12), 0.2, ROOF_TOP, shellMat, { size: 0.13, thickness: 0.13 }));
+
+// ---- black trim bands wrapping the outline (roofline + belly, as in the photos) ----
+pod.add(planExtrude(planRing(0.05, -0.07), 0.13, 2.99, trimMat));
+pod.add(planExtrude(planRing(0.045, -0.07), 0.13, 0.985, trimMat));
+
+// ---- balcony deck + interior floor ----
+{
+  const deck = planExtrude(planShape(-0.12), 0.02, FLOOR_TOP + 0.015, deckMat);
+  deck.receiveShadow = true;
+  pod.add(deck);
+}
+
+// ---- balcony balustrade: curved glass following the front outline, black rails ----
+{
+  const path = frontCurvePoints(-0.10, X_GLASS);
+  const g = ribbon(path, FLOOR_TOP + 0.10, FLOOR_TOP + 0.92, balGlassMat);
+  pod.add(g);
+  const rail3d = path.map(p => new THREE.Vector3(p.x, FLOOR_TOP + 0.95, p.z));
+  const tube = new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rail3d), 120, 0.035, 10, false), frameMat);
+  tube.castShadow = true;
+  pod.add(tube);
+  pod.add(ribbon(path, FLOOR_TOP + 0.02, FLOOR_TOP + 0.09, trimMat));   // bottom channel
+}
+
+// ---- glazed living zone: side glass, mullions, curtains ----
+{
+  for (const sz of [-1, 1]) {
+    const z = sz * (HW - 0.06);
+    const glass = new THREE.Mesh(
+      new THREE.PlaneGeometry(X_HULL - X_GLASS - 0.1, WALL_TOP - FLOOR_TOP - 0.1), glassMat);
+    glass.position.set((X_GLASS + X_HULL) / 2, (FLOOR_TOP + WALL_TOP) / 2, z);
+    pod.add(glass);
+    // black frame channels top/bottom + corner posts + one mullion
+    const w = X_HULL - X_GLASS;
+    for (const [yy, hh] of [[FLOOR_TOP + 0.05, 0.1], [WALL_TOP - 0.05, 0.1]]) {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(w, hh, 0.07), frameMat);
+      strip.position.set((X_GLASS + X_HULL) / 2, yy, z);
+      pod.add(strip);
+    }
+    for (const xx of [X_GLASS + 0.04, (X_GLASS + X_HULL) / 2, X_HULL - 0.04]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.07, WALL_TOP - FLOOR_TOP, 0.07), frameMat);
+      post.position.set(xx, (FLOOR_TOP + WALL_TOP) / 2, z);
+      post.castShadow = true;
+      pod.add(post);
+    }
+    // curtains just inside the glass
+    const cur = new THREE.Mesh(
+      new THREE.PlaneGeometry(X_HULL - X_GLASS - 0.25, WALL_TOP - FLOOR_TOP - 0.18), curtainMat);
+    cur.position.set((X_GLASS + X_HULL) / 2, (FLOOR_TOP + WALL_TOP) / 2 - 0.02, z - sz * 0.16);
+    pod.add(cur);
+  }
+  // interior ceiling + white rear wall of the glazed zone comes from the hull's cut face
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(X_HULL - X_GLASS, WD - 0.2), interiorMat);
+  ceil.rotation.x = Math.PI / 2;
+  ceil.position.set((X_GLASS + X_HULL) / 2, WALL_TOP - 0.02, 0);
+  pod.add(ceil);
+}
+
+// ---- front wall with glass door (balcony side) ----
+{
+  const wallGlass = new THREE.Mesh(
+    new THREE.PlaneGeometry(WD - 0.16, WALL_TOP - FLOOR_TOP - 0.1), glassMat);
+  wallGlass.rotation.y = Math.PI / 2;
+  wallGlass.position.set(X_GLASS, (FLOOR_TOP + WALL_TOP) / 2, 0);
+  pod.add(wallGlass);
+  for (const [yy, hh] of [[FLOOR_TOP + 0.05, 0.1], [WALL_TOP - 0.05, 0.1]]) {
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.07, hh, WD - 0.14), frameMat);
+    strip.position.set(X_GLASS, yy, 0);
+    pod.add(strip);
+  }
+  // door frame + vertical pull handle
+  for (const zz of [-0.55, 0.45]) {
+    const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.07, WALL_TOP - FLOOR_TOP - 0.08, 0.07), frameMat);
+    jamb.position.set(X_GLASS, (FLOOR_TOP + WALL_TOP) / 2, zz);
+    jamb.castShadow = true;
+    pod.add(jamb);
+  }
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 1.0), frameMat);
+  head.position.set(X_GLASS, WALL_TOP - 0.35, -0.05);
+  pod.add(head);
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.6, 10), frameMat);
+  handle.position.set(X_GLASS - 0.06, 1.85, 0.32);
+  pod.add(handle);
+  // corner posts where the canopy meets the glazed zone
+  for (const sz of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, WALL_TOP - FLOOR_TOP, 0.08), frameMat);
+    post.position.set(X_GLASS, (FLOOR_TOP + WALL_TOP) / 2, sz * (HW - 0.1));
+    post.castShadow = true;
+    pod.add(post);
+  }
+}
+
+// ---- dark ribbed canopy ceiling over the balcony ----
+{
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(X_GLASS - X_F + 0.25, WD + 0.1), ceilDarkMat);
+  ceil.rotation.x = Math.PI / 2;
+  ceil.position.set((X_F + X_GLASS) / 2 - 0.05, WALL_TOP + 0.03, 0);
+  pod.add(ceil);
+  for (let i = 0; i < 4; i++) {
+    const rib = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.07, WD - 0.35), trimMat);
+    rib.position.set(X_F + 0.35 + i * 0.42, WALL_TOP - 0.02, 0);
+    pod.add(rib);
+  }
+}
+
+// ---- rear glazed cockpit: wrap-around glass at the rear end ----
+{
+  const path = rearCurvePoints(-0.06, X_RGLASS);
+  pod.add(ribbon(path, FLOOR_TOP + 0.06, WALL_TOP - 0.06, glassMat));
+  pod.add(ribbon(path, FLOOR_TOP, FLOOR_TOP + 0.08, trimMat));            // bottom channel
+  pod.add(ribbon(path, WALL_TOP - 0.08, WALL_TOP, trimMat));              // top channel
+  // slim mullions spaced along the wrap
+  const idx = [0.14, 0.32, 0.5, 0.68, 0.86].map(t => Math.round(t * (path.length - 1)));
+  for (const i of idx) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.038, WALL_TOP - FLOOR_TOP - 0.05, 10), frameMat);
+    m.position.set(path[i].x, (FLOOR_TOP + WALL_TOP) / 2, path[i].z);
+    m.castShadow = true;
+    pod.add(m);
+  }
+  // curtains just inside the glass wrap
+  pod.add(ribbon(rearCurvePoints(-0.26, X_RGLASS + 0.15), FLOOR_TOP + 0.1, WALL_TOP - 0.12, curtainMat));
+  // interior ceiling; the hull's rear cut face forms the white bulkhead
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(X_R - X_RGLASS - 0.5, WD - 0.35), interiorMat);
+  ceil.rotation.x = Math.PI / 2;
+  ceil.position.set((X_RGLASS + X_R) / 2 - 0.15, WALL_TOP - 0.02, 0);
+  pod.add(ceil);
+  // chunky black gasket jambs where glass meets shell (both glazed sections)
+  for (const xx of [X_HULL, X_RGLASS]) {
+    for (const sz of [-1, 1]) {
+      const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.16, WALL_TOP - FLOOR_TOP, 0.1), trimMat);
+      jamb.position.set(xx, (FLOOR_TOP + WALL_TOP) / 2, sz * (HW - 0.05));
+      jamb.castShadow = true;
+      pod.add(jamb);
+    }
+  }
+}
+
+// ---- fluted vent panels on the mid-shell (the grooved cluster in the photos) ----
+{
+  for (const sz of [-1, 1]) {
+    for (let i = 0; i < 6; i++) {
+      const groove = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.055, 0.025),
+        new THREE.MeshStandardMaterial({ color: 0xcfcfc9, roughness: 0.6, metalness: 0.1 }));
+      groove.position.set(-0.55, 1.72 + i * 0.11, sz * (HW - 0.03));
+      pod.add(groove);
+    }
+  }
+}
+
+// ---- service door + louver vents on the rear shell ----
+{
+  // flush white door on the +z side, with shadow-gap outline and black handle
+  const doorX = 1.35, doorW = 0.95, doorH = 1.9, doorY = FLOOR_TOP + doorH / 2 + 0.02;
+  const gap = new THREE.Mesh(new THREE.BoxGeometry(doorW + 0.05, doorH + 0.05, 0.012), trimMat);
+  gap.position.set(doorX, doorY, HW - 0.045);
+  pod.add(gap);
+  const leaf = new THREE.Mesh(new THREE.BoxGeometry(doorW, doorH, 0.03), shellMat);
+  leaf.position.set(doorX, doorY, HW - 0.03);
+  leaf.castShadow = true;
+  pod.add(leaf);
+  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.32, 0.05), frameMat);
+  handle.position.set(doorX + doorW / 2 - 0.12, doorY + 0.05, HW + 0.005);
+  pod.add(handle);
+
+  // louver groups (both sides): recessed dark slats, like the photos' gill vents
+  const louver = (cx, cy, sz, n, w) => {
+    for (let i = 0; i < n; i++) {
+      const slat = new THREE.Mesh(new THREE.BoxGeometry(w, 0.075, 0.03), new THREE.MeshStandardMaterial({ color: 0x33363a, roughness: 0.6, metalness: 0.2 }));
+      slat.position.set(cx, cy + i * 0.155, sz * (HW - 0.035));
+      pod.add(slat);
+    }
+  };
+  louver(2.6, 1.45, 1, 6, 1.1);                     // beside the door (+z side)
+  louver(1.15, 1.45, -1, 6, 1.5);                   // -z side
+  louver(2.65, 1.45, -1, 6, 0.9);
+}
+
+// ---- subtle panel seams on the shell ----
+{
+  const seam = (x) => {
+    for (const sz of [-1, 1]) {
+      const s = new THREE.Mesh(new THREE.BoxGeometry(0.012, WALL_TOP - FLOOR_TOP - 0.35, 0.012), trimMat);
+      s.position.set(x, (FLOOR_TOP + WALL_TOP) / 2, sz * (HW - 0.015));
+      pod.add(s);
+    }
+  };
+  seam(0.45); seam(2.15);
+  // horizontal panel seam running the mid-shell, high (as in the crane photo)
+  for (const sz of [-1, 1]) {
+    const h = new THREE.Mesh(new THREE.BoxGeometry(X_RGLASS - X_HULL - 0.25, 0.012, 0.012), trimMat);
+    h.position.set((X_HULL + X_RGLASS) / 2, 2.52, sz * (HW - 0.015));
+    pod.add(h);
+  }
+  // twin grey accent pinstripes low on the hull (the decal lines in the photos)
+  const stripeMat = new THREE.MeshStandardMaterial({ color: 0x5a5d61, roughness: 0.6, metalness: 0.1 });
+  for (const sz of [-1, 1]) for (const yy of [1.16, 1.24]) {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(X_RGLASS - X_HULL - 0.3, 0.022, 0.008), stripeMat);
+    p.position.set((X_HULL + X_RGLASS) / 2, yy, sz * (HW - 0.012));
+    pod.add(p);
+  }
+  // roofline seam across the cap (the photos show a joint above the shell mid-line)
+  const roofSeam = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.02, WD + 0.22), trimMat);
+  roofSeam.position.set(0.9, ROOF_TOP - 0.09, 0);
+  pod.add(roofSeam);
+}
+
+// ---- Solvio all-black "feather" panels laid flat along the roof ----
+// Same module as the balcony/rooftop viewers: 1761 x 1133 mm frameless glass-glass
+// laminate, half-cut cell face, carried on two slim dark rails per panel.
+// Three roof layouts, cycled with the Layout button:
+//   1: 6 panels  — landscape, 3 along each long side
+//   2: 12 panels — landscape, 6 along each long side
+//   3: 16 panels — portrait (rotated 90°), two per row, 8 rows along the length
+function makeCellMap() {
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 330;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#08090c'; c.fillRect(0, 0, 512, 330);
+  const cols = 12, rows = 8, cw = 512 / cols, ch = 330 / rows;
+  for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
+    const g = c.createLinearGradient(i * cw, j * ch, (i + 1) * cw, (j + 1) * ch);
+    g.addColorStop(0, '#0d0f14'); g.addColorStop(1, '#0a0b0f');
+    c.fillStyle = g;
+    c.fillRect(i * cw + 1.2, j * ch + 1.2, cw - 2.4, ch - 2.4);
+    c.strokeStyle = 'rgba(70,76,90,0.25)'; c.lineWidth = 0.7;   // busbar hint
+    c.beginPath(); c.moveTo(i * cw + cw / 2, j * ch + 2); c.lineTo(i * cw + cw / 2, (j + 1) * ch - 2); c.stroke();
+  }
+  c.fillStyle = 'rgba(0,0,0,0.35)';                             // centre split of the half-cut layout
+  c.fillRect(0, 163, 512, 4);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+const cellMat = new THREE.MeshPhysicalMaterial({
+  color: 0xffffff, map: makeCellMap(), roughness: 0.22, metalness: 0.0,
+  clearcoat: 0.65, clearcoatRoughness: 0.18, envMapIntensity: 1.1
+});
+const edgeDark = new THREE.MeshStandardMaterial({ color: 0x0c0d0f, roughness: 0.5, metalness: 0.2 });
+const railDark = new THREE.MeshStandardMaterial({ color: 0xaeb3b8, roughness: 0.3, metalness: 0.75 });  // light anodized aluminium
+const PW = 1.761, PH = 1.133, PT = 0.006;                       // module footprint + feather thickness
+const panelGroup = new THREE.Group();
+pod.add(panelGroup);
+
+// one flat module centred at (cx, cz); portrait = long edge across the pod
+function addModule(cx, cz, portrait, withRails = true) {
+  const sx = portrait ? PH : PW, sz = portrait ? PW : PH;       // footprint on the roof
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(sx, PT, sz),
+    [edgeDark, edgeDark, cellMat, edgeDark, edgeDark, edgeDark]);   // cells face up
+  if (portrait) {                                               // keep the cell grid aligned with the module
+    panel.geometry = new THREE.BoxGeometry(PW, PT, PH);
+    panel.rotation.y = Math.PI / 2;
+  }
+  panel.position.set(cx, ROOF_TOP + 0.028 + PT / 2, cz);
+  panel.castShadow = true;
+  panelGroup.add(panel);
+  if (withRails) for (const sr of [-1, 1]) {                                   // slim rails under the long edges
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(portrait ? 0.042 : PW + 0.10, 0.025, portrait ? PW + 0.10 : 0.042), railDark);
+    rail.position.set(
+      cx + (portrait ? sr * (PH / 2 - 0.09) : 0),
+      ROOF_TOP + 0.014,
+      cz + (portrait ? 0 : sr * (PH / 2 - 0.09)));
+    rail.castShadow = true;
+    panelGroup.add(rail);
+  }
+}
+
+const LAYOUTS = [
+  { label: '◧ 6 panels · 3 + 3', build: () => {
+      for (const sz of [-1, 1]) for (const cx of [-3.6, 0, 3.6])
+        addModule(cx, sz * 0.714, false);                       // 3 per long side; ~29 cm centre aisle
+    } },
+  { label: '◨ 12 panels · 6 + 6', build: () => {
+      const gap = 0.06, row = 6 * PW + 5 * gap;
+      for (const sz of [-1, 1]) for (let i = 0; i < 6; i++)
+        addModule(-row / 2 + PW / 2 + i * (PW + gap), sz * 0.714, false);   // ~29 cm centre aisle
+    } },
+  { label: '▥ 16 panels · portrait ×2', build: () => {
+      // rows spaced 27 cm apart; panels carried by four continuous steel
+      // frames running PARALLEL to the capsule's long edges: one near each long
+      // edge of the roof, and two in the middle directly below the panels' inner edges
+      const gap = 0.27, cols = 8, span = cols * PH + (cols - 1) * gap;
+      for (let i = 0; i < cols; i++) for (const sz of [-1, 1])
+        addModule(-span / 2 + PH / 2 + i * (PH + gap), sz * (PW / 2 + 0.03), true, false);
+      const railLen = span + 0.02;   // trimmed so the frame tips stay on the rounded roof ends
+      for (const rz of [-1.45, -0.10, 0.10, 1.45]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(railLen, 0.025, 0.042), railDark);
+        rail.position.set(0, ROOF_TOP + 0.014, rz);
+        rail.castShadow = true;
+        panelGroup.add(rail);
+      }
+    } }
+];
+let layoutIdx = 0;
+function buildLayout() {
+  while (panelGroup.children.length) {
+    const m = panelGroup.children.pop();
+    if (m.geometry) m.geometry.dispose();
+    panelGroup.remove(m);
+  }
+  LAYOUTS[layoutIdx].build();
+  document.getElementById('layoutBtn').textContent = LAYOUTS[layoutIdx].label;
+}
+buildLayout();
+document.getElementById('layoutBtn').onclick = () => {
+  layoutIdx = (layoutIdx + 1) % LAYOUTS.length;
+  buildLayout();
+};
+
+// ---- concrete block piers ----
+{
+  const pier = (x) => {
+    const b1 = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.28, 0.6), blockMat);
+    b1.position.set(x, 0.14, 0);
+    const b2 = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.27, 0.5), blockMat);
+    b2.position.set(x, 0.415, 0);
+    b1.castShadow = b2.castShadow = true; b1.receiveShadow = b2.receiveShadow = true;
+    pod.add(b1, b2);
+  };
+  pier(X_F + 2.6); pier(X_F + 6.4); pier(X_F + 10.0);
+}
+
+// =================== ground ===================
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(30, 48),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, map: makeGrassMap(), roughness: 0.95, metalness: 0.0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// =================== UI ===================
+let spinning = false;
+const spinBtn = document.getElementById('spin');
+spinBtn.onclick = () => { spinning = !spinning; spinBtn.textContent = (spinning ? '⏸' : '▶') + ' Auto-rotate'; };
+controls.addEventListener('start', () => {
+  document.getElementById('draghint').classList.add('hide');
+  if (spinning) { spinning = false; spinBtn.textContent = '▶ Auto-rotate'; }
+});
+
+const angleEl = document.getElementById('angle');
+function updateAngle() {
+  let az = THREE.MathUtils.radToDeg(controls.getAzimuthalAngle()) - THREE.MathUtils.radToDeg(pod.rotation.y);
+  az = ((az % 360) + 540) % 360 - 180;
+  const el = 90 - THREE.MathUtils.radToDeg(controls.getPolarAngle());
+  const dist = camera.position.distanceTo(controls.target);
+  const s = `Azimuth <b>${az.toFixed(0)}°</b> &nbsp;·&nbsp; Elevation <b>${el.toFixed(0)}°</b> &nbsp;·&nbsp; Dist <b>${dist.toFixed(1)} m</b>`;
+  if (s !== angleEl.dataset.s) { angleEl.innerHTML = s; angleEl.dataset.s = s; }
+}
+
+window.__render = () => renderer.render(scene, camera);
+window.__view = (az, el, d) => {   // position camera at azimuth/elevation for captures
+  const t = controls.target;
+  const phi = (90 - el) * Math.PI / 180, th = az * Math.PI / 180;
+  camera.position.set(t.x + d * Math.sin(phi) * Math.sin(th), t.y + d * Math.cos(phi), t.z + d * Math.sin(phi) * Math.cos(th));
+  controls.update();
+};
+
+function animate() {
+  requestAnimationFrame(animate);
+  if (spinning) pod.rotation.y += 0.003;
+  if (zooming) {
+    const off = camera.position.clone().sub(controls.target);
+    const cur = off.length();
+    const diff = zoomTarget - cur;
+    if (Math.abs(diff) < 0.003) { off.setLength(zoomTarget); zooming = false; }
+    else off.setLength(cur + diff * 0.14);
+    camera.position.copy(controls.target).add(off);
+  }
+  controls.update();
+  updateAngle();
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+</script>
+</body>
+</html>
